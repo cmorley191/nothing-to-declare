@@ -166,7 +166,6 @@ export default function App({ }: AppProps) {
 
             setAppMachineState({
               state: "ConnectReady",
-              connectInfo: appMachineState.connectInfo,
               warning
             });
           }}
