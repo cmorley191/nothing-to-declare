@@ -368,37 +368,63 @@ function FloatingDiv(props: {
  * Displays and animates according to ClaimMessageGameAnimationSteps in the game-wide GameAnimationSequence.
  */
 function ClaimMessageAnimatedRevealingText(props: {
-  animation: Optional<GameAnimationSequence>
+  usekey: string,
+  message: string,
+  animation: Optional<GameAnimationSequence>,
   [otherOptions: string]: unknown;
 }) {
   const attrs = omitAttrs(['animation'], props);
 
   const { iGameAnimationStep, gameAnimationStep } = useGameAnimationStep(props.animation);
 
-  const [message, setMessage] = React.useState("");
-  const [revealProgress, setRevealProgress] = React.useState(0);
+  const messageToMessageLines = (message: string) => {
+    return message.split("\n")
+      .map(l =>
+        l.split(" ")
+          .reduce((a: string[], b: string): string[] => {
+            const lastLine = a.at(-1);
+            if (lastLine === undefined || lastLine.length + b.length > 70) return a.concat([b]);
+            else return a.take(a.length - 1).concat([`${lastLine} ${b}`]);
+          }, [])
+      )
+      .reduce((a, b) => a.concat(b))
+  }
+
+  const [messageLines, setMessageLines] = React.useState(messageToMessageLines(props.message));
+  const [revealProgress, setRevealProgress] = React.useState(props.animation.hasValue == true && props.animation.value.sequence.some(s => s.type === "claim message") ? 0 : 10000000);
 
   React.useEffect(() => {
     if (gameAnimationStep.hasValue === true) {
       const step = gameAnimationStep.value.step;
       if (step.type === "claim message") {
         let revealProgress = 0;
-        setMessage(step.message);
+        const stepMessageLines = messageToMessageLines(step.message);
+        const maxRevealProgress = stepMessageLines.map(l => l.length).reduce((a, b) => a + b);
+        setMessageLines(stepMessageLines);
         setRevealProgress(revealProgress);
         const interval = window.setInterval((() => {
           while (true) {
-            if (revealProgress >= step.message.length) {
+            if (revealProgress >= maxRevealProgress) {
               window.clearInterval(interval);
               gameAnimationStep.value.onCompleteRegistrations.forEach(c => c());
               break;
             }
             revealProgress++;
-            if (step.message.at(revealProgress - 1) !== " ") {
+            const charRevealed = (() => {
+              let iChar = 0;
+              for (const line of stepMessageLines) {
+                const lineChar = line.at(revealProgress - iChar - 1);
+                if (lineChar !== undefined) return lineChar;
+                iChar += line.length;
+              }
+              return "";
+            })();
+            if (charRevealed !== " ") {
               break;
             }
           }
           setRevealProgress(revealProgress);
-        }), 1000 / 20); // 20 chars per second
+        }), 1000 / (10 + (step.message.length / 10))); // 20 chars per second
 
         return () => {
           window.clearInterval(interval);
@@ -408,10 +434,45 @@ function ClaimMessageAnimatedRevealingText(props: {
     return;
   }, [iGameAnimationStep]);
 
+  const [iRevealLine, iRevealChar] = (() => {
+    let iLine = 0;
+    let iChar = 0;
+    for (const line of messageLines) {
+      if (iChar + line.length >= revealProgress) return [iLine, revealProgress - iChar];
+      iLine += 1;
+      iChar += line.length;
+    }
+    return [iLine, 0];
+  })();
+
   return (
     <span {...attrs}>
-      {message.substring(0, revealProgress)}
+      {
+        messageLines
+          .map((l, i) => (
+            <span key={`${props.usekey}_claim_message_line_${i}`}>
+              {
+                (iRevealLine !== i)
+                  ? (
+                    <span style={{ opacity: i < iRevealLine ? 1 : 0 }}>{l}</span>
+                  )
+                  : (
+                    <span>
+                      <span style={{ opacity: 1 }}>{l.substring(0, iRevealChar)}</span>
+                      <span style={{ opacity: 0 }}>{l.substring(iRevealChar)}</span>
+                    </span>
+                  )
+              }
+              {
+                (i < messageLines.length - 1)
+                  ? (<br></br>)
+                  : undefined
+              }
+            </span>
+          ))
+      }
     </span>
+
   )
 }
 
@@ -770,96 +831,98 @@ function LocalReadyPoolSupplyContracts(props: {
       >
         {
           props.contracts
-            .map((c, i) => (
-              <td
-                key={`${props.usekey}_supply_contract_${i}`}
-                style={{
-                  opacity: (c.style === "visible") ? 1 : (c.style == "faded") ? 0.3 : 0,
-                  display: "inline-block",
-                  width: `${Math.floor(100 / contractsPerRow) - 1}%`,
-                }}
-                onClick={(event) => { if (c.clickable && props.onClick !== undefined) props.onClick({ event: event.nativeEvent, iContract: i }) }}
-              >
-                <div style={{ position: "relative" }}>
-                  <div>
-                    <div style={{
-                      whiteSpace: "nowrap",
-                      margin: `${contractMarginPx}px`,
-                    }}>
-                      <div style={{
-                        display: "inline-block",
-                        fontSize: "200%",
-                        width: "100%",
-                        textAlign: "center",
-                      }}>
-                        {c.productType.hasValue === true ? getProductInfo(c.productType.value).icon : unknownProductIcon}
-                      </div>
-                      <div style={{
-                        width: "100%",
-                        textAlign: "center",
-                      }}>
-                        {
-                          (c.productType.hasValue === true)
-                            ? (
-                              <span>
-                                {getProductInfo(c.productType.value).legal ? legalProductIcon : illegalProductIcon}
-                                {" "}
-                                {pointIcon}{getProductInfo(c.productType.value).value}
-                                {" "}
-                                {fineIcon}{getProductInfo(c.productType.value).fine}
-                              </span>
-                            )
-                            : (
-                              <span style={{ opacity: 0 }}>
-                                {unknownProductIcon}{" "}{pointIcon}{0}{" "}{fineIcon}{0}
-                              </span>
-                            )
-                        }
-                      </div>
-                      <div style={{
-                        width: "100%",
-                        textAlign: "center",
-                      }}>
-                        {
-                          (() => {
-                            const award = (c.productType.hasValue == true ? getProductInfo(c.productType.value).award : nullopt);
-                            if (award.hasValue == false) {
-                              return (
-                                <span style={{ opacity: 0, fontSize: "60%" }}>
-                                  {trophyIcon}{": "}{unknownProductIcon}
-                                </span>
-                              )
-                            } else {
-                              return (
-                                <span style={{ fontSize: "60%" }}>
-                                  {trophyIcon}{": "}{Array(award.value.points).fill(getProductInfo(award.value.productType).icon).join("")}
-                                </span>
-                              )
-                            }
-                          })()
-                        }
-                      </div>
-                    </div>
-                  </div>
-                  <img
-                    src={c.productType.hasValue === false || getProductInfo(c.productType.value).category === "legal" ? parchmentLegalImgSrc : parchmentIllegalImgSrc}
-                    style={{
-                      position: "absolute",
-                      left: 0,
-                      top: `-${contractMarginPx}px`,
-                      width: "100%",
-                      zIndex: -2,
-                    }}
-                  />
-                </div>
-              </td>
-            ))
+            .map((c, i) => ({ ...c, iContract: i }))
             .groupwise(contractsPerRow)
-            .map((g, i) => (
+            .map((g, iRow) => (
               <tr
-                key={`${props.usekey}_supply_contract_group_${i}`}
+                key={`${props.usekey}_supply_contract_group_${iRow}`}
               >
-                {g}
+                {
+                  g.map((c) => (
+                    <td
+                      key={`${props.usekey}_supply_contract_${c.iContract}`}
+                      style={{
+                        opacity: (c.style === "visible") ? 1 : (c.style == "faded") ? 0.3 : 0,
+                        display: "inline-block",
+                        width: `${Math.floor(100 / g.length) - 1}%`,
+                      }}
+                      onClick={(event) => { if (c.clickable && props.onClick !== undefined) props.onClick({ event: event.nativeEvent, iContract: c.iContract }) }}
+                    >
+                      <div style={{ position: "relative" }}>
+                        <div>
+                          <div style={{
+                            whiteSpace: "nowrap",
+                            margin: `${contractMarginPx}px`,
+                          }}>
+                            <div style={{
+                              display: "inline-block",
+                              fontSize: "200%",
+                              width: "100%",
+                              textAlign: "center",
+                            }}>
+                              {c.productType.hasValue === true ? getProductInfo(c.productType.value).icon : unknownProductIcon}
+                            </div>
+                            <div style={{
+                              width: "100%",
+                              textAlign: "center",
+                            }}>
+                              {
+                                (c.productType.hasValue === true)
+                                  ? (
+                                    <span>
+                                      {getProductInfo(c.productType.value).legal ? legalProductIcon : illegalProductIcon}
+                                      {" "}
+                                      {pointIcon}{getProductInfo(c.productType.value).value}
+                                      {" "}
+                                      {fineIcon}{getProductInfo(c.productType.value).fine}
+                                    </span>
+                                  )
+                                  : (
+                                    <span style={{ opacity: 0 }}>
+                                      {unknownProductIcon}{" "}{pointIcon}{0}{" "}{fineIcon}{0}
+                                    </span>
+                                  )
+                              }
+                            </div>
+                            <div style={{
+                              width: "100%",
+                              textAlign: "center",
+                            }}>
+                              {
+                                (() => {
+                                  const award = (c.productType.hasValue == true ? getProductInfo(c.productType.value).award : nullopt);
+                                  if (award.hasValue == false) {
+                                    return (
+                                      <span style={{ opacity: 0, fontSize: "60%" }}>
+                                        {trophyIcon}{": "}{unknownProductIcon}
+                                      </span>
+                                    )
+                                  } else {
+                                    return (
+                                      <span style={{ fontSize: "60%" }}>
+                                        {trophyIcon}{": "}{Array(award.value.points).fill(getProductInfo(award.value.productType).icon).join("")}
+                                      </span>
+                                    )
+                                  }
+                                })()
+                              }
+                            </div>
+                          </div>
+                        </div>
+                        <img
+                          src={c.productType.hasValue === false || getProductInfo(c.productType.value).category === "legal" ? parchmentLegalImgSrc : parchmentIllegalImgSrc}
+                          style={{
+                            position: "absolute",
+                            left: 0,
+                            top: `-${contractMarginPx}px`,
+                            width: "100%",
+                            zIndex: -2,
+                          }}
+                        />
+                      </div>
+                    </td>
+                  ))
+                }
               </tr>
             ))
         }
@@ -1597,7 +1660,7 @@ function FloatingAnimatedCart(props: {
       <AnimatedCart
         key={`${getStaticCartEleId({ location: props.location, iPlayerOwner: props.iPlayerOwner })}_animated_cart`}
         id={getStaticCartEleId({ location: props.location, iPlayerOwner: props.iPlayerOwner })}
-        style={{ opacity: props.active && props.animation.hasValue == false ? 1 : 0 }}
+        style={{ opacity: props.active && props.animation.hasValue == false ? 1 : 0, display: "inline-block" }}
         contents={props.contents}
         animation={nullopt}
         officerTools={props.officerTools}
@@ -1639,6 +1702,7 @@ function FloatingAnimatedCart(props: {
             >
               <AnimatedCart
                 key={`${getStaticCartEleId({ location: props.location, iPlayerOwner: props.iPlayerOwner })}_floating_animated_cart`}
+                style={{ display: "inline-block" }}
                 contents={
                   props.contents.labeled == false
                     ? props.contents
@@ -3897,19 +3961,18 @@ export default function MenuGame(props: MenuGameProps) {
                       <div
                         id="menu_game_working_center_customs_cart_claim_message"
                       >
-                        {
-                          (() => {
-                            if (clientGameState.state == "CustomsIntro" && clientGameState.introState == "ready") {
-                              const cartState = clientGameState.cartStates.get(clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader);
-                              if (cartState.packed == true && cartState.cart.claimMessage.hasValue == true) {
-                                return (<span>{cartState.cart.claimMessage.value}</span>)
-                              }
-                            }
-                            return undefined;
-                          })()
-                        }
                         <ClaimMessageAnimatedRevealingText
                           key={`menu_game_customs_claim_message_rerender_${renderCount.current}`}
+                          usekey={`menu_game_customs_claim_message`}
+                          message={(() => {
+                            if (clientGameState.state == "CustomsIntro") {
+                              const cartState = clientGameState.cartStates.get(clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader);
+                              if (cartState.packed == true && cartState.cart.claimMessage.hasValue == true) {
+                                return cartState.cart.claimMessage.value;
+                              }
+                            }
+                            return "";
+                          })()}
                           animation={animation}
                         />
                       </div>
@@ -4005,7 +4068,7 @@ export default function MenuGame(props: MenuGameProps) {
                         <div>
                           {
                             (args.givingIsOfficer)
-                              ? (<span>Won't search {clientGameState.localActiveTrader ? "your" : `${props.clients.get(iPlayerActiveTrader).name}'s`} cart</span>)
+                              ? (<div>Won't search {clientGameState.localActiveTrader ? "your" : `${props.clients.get(iPlayerActiveTrader).name}'s`} cart</div>)
                               : undefined
                           }
                           {
@@ -4017,7 +4080,7 @@ export default function MenuGame(props: MenuGameProps) {
                             ]
                               .filter(s => s.amount > 0)
                               .map(s => (
-                                <span>{s.amount} {s.icon}</span>
+                                <div>{s.amount} {s.icon}</div>
                               ))
                           }
                         </div>
@@ -4312,7 +4375,7 @@ export default function MenuGame(props: MenuGameProps) {
                     cols={30}
                     onChange={e => setClientGameState({
                       ...clientGameState,
-                      claimMessage: e.target.value
+                      claimMessage: e.target.value.length <= 1000 ? e.target.value : clientGameState.claimMessage
                     })}
                     value={clientGameState.claimMessage}
                     placeholder="Write an additional message for the customs officer..."
@@ -4631,8 +4694,8 @@ export default function MenuGame(props: MenuGameProps) {
                 )
                   ? {
                     mode: "select for exit",
-                    selectInstruction: `Click Contracts to ${clientGameState.state == "Swap" ? "Recycle" : "Pack"}`,
-                    exitTitle: clientGameState.state == "Swap" ? "Recycling" : "Packing",
+                    selectInstruction: `Click Contracts to ${clientGameState.state == "Swap" ? "Recycle" : "Pack into Crate"}`,
+                    exitTitle: clientGameState.state == "Swap" ? "Recycle" : "Pack",
                     entry: clientGameState.state == "Swap" ? opt({ type: "general pool", title: "Acquiring" }) : nullopt,
                     isSubmittable: () => true, // clientGameState.state == "Swap" || (selected.some(s => s) && clientGameState.claimedProductType.hasValue),
                     onSubmit: ({ selected }) => {
