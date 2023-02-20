@@ -1,6 +1,23 @@
+## 1.1 TODO
+- game settings
+  - initially just number of rounds
+- officer indicator along top instead of an officer section
+- reference chart of products
+- game setting: swap modes -- simple or strategic
+  - simple: swap and pack in the same stage, simultaneously with other traders. no taking contracts from recycle pool (recycle pool does not exist)
+  - strategic: swap sequentially, taking and recycling contracts via recycle pool. then pack simultaneously (start packing as soon as local swap complete)
+- chat window with game log
+- optionally add text message on deal
+- make deals with supplies products
+- pay fines with supplies products if out of money
+- approval stamp officer tool
+- hammer officer tool
+- make deals at any time
+
+
+## Unprioritized
 - layout
   - center area dummy div should shrink before scrollbar appears
-  - no officer section, rather an officer indicator, and local player appears in turn order
 
 - improvements
   - red, bigger crowbar
@@ -8,8 +25,6 @@
   - midgame point indicator needs revamp (breakdown?)
   - ability to undo cart pack (go back) while others are still packing
   - ability to modify claim message while others are still packing
-  - immediately be able to pack after swapping
-  - different parchment images to distinguish legal, illegal, rare
   - claim message shown during interrogation
   - dialogue animation / sounds for proposed deals
   - game end points tie rules
@@ -19,16 +34,10 @@
 - new features
   - game settings
     - option to either reveal contents immediately when allowed through or wait until the end
-    - option for recycle pool taking (recycle with sequential swap, or no recycle with simultaneous swap)
   - animated game end screen
-  - open cart with crowbar OR a hammer
-  - reference chart of products
   - server
     - rejoinability
     - host migration
   - sound
     - will help with anti-climactic product reveals
   - turn timer
-  - deals using goods
-  - deals at any time
-
