@@ -2,7 +2,7 @@ import * as React from "react";
 
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
 import * as NetworkTypes from "../../core/network_types";
-import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, PlayerCount, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings } from "../../core/game_types";
+import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings } from "../../core/game_types";
 import { Optional, getRandomInt, nullopt, omitAttrs, opt } from "../../core/util";
 
 import AnimatedEllipses from "../elements/animated_ellipses";
@@ -129,30 +129,18 @@ function useGameAnimationStep(animation: Optional<GameAnimationSequence>) {
 }
 
 /**
- * Returns an array of the number of supply contracts in the general pool at the start of the game, 
- * indexed by the ProductType of the contract.
- */
-function getFreshGeneralPoolContractCounts(numPlayers: PlayerCount) {
-  if (numPlayers == 3) {
-    return ProductArray.newArray([48, 36, 0, 24, 2, 1, 2, 0, 0, 0, 1, 18, 16, 9, 5]);
-  } else {
-    return ProductArray.newArray([48, 36, 36, 24, 2, 2, 2, 1, 2, 1, 2, 22, 21, 12, 5]);
-  }
-}
-
-/**
  * Returns a number of randomly-chosen supply contracts (specifically, returns their ProductType) 
  * from the general pool, and updates the general pool in-place to reflect the removed contracts.
  * 
  * @param numContracts number of supply contracts to take
  * @param numPlayers number of players in the game
  */
-function takeContractsFromGeneralPool(contractPools: CommunityContractPools, numContracts: number, numPlayers: PlayerCount) {
+function takeContractsFromGeneralPool(gameSettings: GameSettings, contractPools: CommunityContractPools, numContracts: number) {
   let generalPoolTotalContractCount = contractPools.generalPoolContractCounts.arr.reduce((a, b) => a + b);
 
   // refresh general pool if it's about to be empty
   if (generalPoolTotalContractCount + 1 < numContracts) {
-    contractPools.generalPoolContractCounts = getFreshGeneralPoolContractCounts(numPlayers);
+    contractPools.generalPoolContractCounts = gameSettings.generalPoolContractCounts.shallowCopy();
     generalPoolTotalContractCount = contractPools.generalPoolContractCounts.arr.reduce((a, b) => a + b);
   }
 
@@ -186,8 +174,8 @@ function takeContractsFromGeneralPool(contractPools: CommunityContractPools, num
 /**
  * @param numPlayers number of players in the game
  */
-function generateInitialPersistentGameState(players: PlayerArray<any>): PersistentGameState {
-  const generalPoolContractCounts = getFreshGeneralPoolContractCounts(players.length);
+function generateInitialPersistentGameState(gameSettings: GameSettings, players: PlayerArray<any>): PersistentGameState {
+  const generalPoolContractCounts = gameSettings.generalPoolContractCounts.shallowCopy();
   const contractPools: CommunityContractPools = {
     generalPoolContractCounts: generalPoolContractCounts,
     recyclePoolsContracts: [[], []]
@@ -196,7 +184,7 @@ function generateInitialPersistentGameState(players: PlayerArray<any>): Persiste
   const traderSupplies =
     players.map(() => {
       return {
-        readyPool: takeContractsFromGeneralPool(contractPools, readyPoolSize, players.length),
+        readyPool: takeContractsFromGeneralPool(gameSettings, contractPools, readyPoolSize),
         money: 50,
         shopProductCounts: productInfos.map(() => 0)
       };
@@ -1999,7 +1987,7 @@ export default function MenuGame(props: MenuGameProps) {
 
   const [clientGameState, setClientGameState] = React.useState<ClientGameState>(() => {
     if (!(props.clients.arr.length == 3 || props.clients.arr.length == 4 || props.clients.arr.length == 5 || props.clients.arr.length == 6)) {
-      return { state: "GameEnd", finalTraderSupplies: generateInitialPersistentGameState(props.clients).traderSupplies };
+      return { state: "GameEnd", finalTraderSupplies: generateInitialPersistentGameState(props.settings, props.clients).traderSupplies };
     }
     return { state: "Setup" };
   });
@@ -2009,7 +1997,7 @@ export default function MenuGame(props: MenuGameProps) {
     switch (clientGameState.state) {
       case "Setup":
         // this should never happen
-        return { state: "GameEnd", finalTraderSupplies: generateInitialPersistentGameState(props.clients).traderSupplies };
+        return { state: "GameEnd", finalTraderSupplies: generateInitialPersistentGameState(props.settings, props.clients).traderSupplies };
 
       case "Swap":
         return {
@@ -2473,7 +2461,7 @@ export default function MenuGame(props: MenuGameProps) {
               return nullopt;
             }
             const [readyPoolRecycled, newReadyPool] = readyPoolRecycling.splitMap(([product, recycling]) => [recycling, product]);
-            newReadyPool.push(...takeContractsFromGeneralPool(newPools, readyPoolRecycled.length, props.clients.length));
+            newReadyPool.push(...takeContractsFromGeneralPool(props.settings, newPools, readyPoolRecycled.length));
             (newPools.recyclePoolsContracts[0] ?? []).push(...readyPoolRecycled);
             const newTraderSupplies = serverGameState.traderSupplies.shallowCopy();
             newTraderSupplies.set(serverGameState.iPlayerActiveTrader, {
@@ -2871,7 +2859,7 @@ export default function MenuGame(props: MenuGameProps) {
                   };
                 });
                 newTraderSupplies.arr.forEach(s => {
-                  s.readyPool.push(...takeContractsFromGeneralPool(newPools, readyPoolSize - s.readyPool.length, props.clients.length));
+                  s.readyPool.push(...takeContractsFromGeneralPool(props.settings, newPools, readyPoolSize - s.readyPool.length));
                 });
 
                 // check for end of game
@@ -2982,7 +2970,7 @@ export default function MenuGame(props: MenuGameProps) {
       }
 
       const iPlayerOfficer = props.clients.getRandomIndex();
-      const persistentGameState = generateInitialPersistentGameState(props.clients);
+      const persistentGameState = generateInitialPersistentGameState(props.settings, props.clients);
       const state: SerializableServerGameState = {
         state: "Swap",
         round: 0,

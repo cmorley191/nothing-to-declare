@@ -81,6 +81,7 @@ export class ProductArray<T> {
 
   set(index: ProductType, obj: T) {
     this.arr[index] = obj;
+    return this;
   }
 
   shallowCopy() {
@@ -236,6 +237,7 @@ export class PlayerArray<T> {
   set(index: ValidPlayerIndex, obj: T) {
     const indexVal = typeof index === 'number' ? index : index.value;
     this.arr[indexVal] = obj;
+    return this;
   }
 
   incrementIndexModLength(index: ValidPlayerIndex, increment: number) {
@@ -280,7 +282,12 @@ export class PlayerArray<T> {
 
 export type GameSettings = {
   numRounds: number,
+  generalPoolContractCounts: ProductArray<number>,
 };
+export type SerializableGameSettings = {
+  numRounds: number,
+  generalPoolContractCounts: number[],
+}
 
 
 export type CommunityContractPools = {

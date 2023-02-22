@@ -1,7 +1,7 @@
 import * as React from "react";
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
 import * as NetworkTypes from "../../core/network_types";
-import { GameSettings, playerIcons } from "../../core/game_types";
+import { GameSettings, ProductArray, playerIcons, productInfos } from "../../core/game_types";
 import { Optional, nullopt, opt } from "../../core/util";
 import AnimatedEllipses from "../elements/animated_ellipses";
 
@@ -28,7 +28,10 @@ type HostInfo =
       gameSettings: {
         numRoundsPerPlayer:
         | { type: "recommended" }
-        | { type: "custom", value: number }
+        | { type: "custom", value: number },
+        generalPoolContractCounts:
+        | { type: "recommended" }
+        | { type: "custom", value: ProductArray<number> },
       }
     }
     | { localHost: false, }
@@ -70,7 +73,8 @@ export default function MenuLobby(props: MenuLobbyProps) {
         hostInfo: {
           localHost: true,
           gameSettings: {
-            numRoundsPerPlayer: { type: "recommended" }
+            numRoundsPerPlayer: { type: "recommended" },
+            generalPoolContractCounts: { type: "recommended" },
           }
         },
         selectedPlayerIcon: nullopt,
@@ -213,6 +217,13 @@ export default function MenuLobby(props: MenuLobbyProps) {
           } break;
 
           case NetworkTypes.ServerEventType.START_GAME: {
+            const deserializedGeneralPoolContractCounts = ProductArray.tryNewArray(event.data.gameSettings.generalPoolContractCounts);
+            if (deserializedGeneralPoolContractCounts.hasValue === false) {
+              console.log(`Invalid START_GAME event: ${JSON.stringify(event)}`);
+              console.trace();
+              produceError(`Encountered an internal error.`);
+              break;
+            }
             const otherPlayers = lobbyMachineState.otherClients.zip(lobbyMachineState.otherPlayerIcons);
             if (otherPlayers === undefined) {
               console.log(`Invalid lobby state: ${JSON.stringify(lobbyMachineState)}`);
@@ -222,7 +233,10 @@ export default function MenuLobby(props: MenuLobbyProps) {
             }
             props.onStartGame({
               hostInfo: lobbyMachineState.hostInfo,
-              gameSettings: event.data.gameSettings,
+              gameSettings: {
+                numRounds: event.data.gameSettings.numRounds,
+                generalPoolContractCounts: deserializedGeneralPoolContractCounts.value,
+              },
               finalLocalName: `${lobbyMachineState.selectedPlayerIcon.hasValue == true ? lobbyMachineState.selectedPlayerIcon.value : ""}${props.localInfo.localPlayerName}`,
               otherClients: otherPlayers.map(([c, icon]) => ({
                 ...c,
@@ -351,7 +365,12 @@ export default function MenuLobby(props: MenuLobbyProps) {
       });
 
       const recommendedGameSettings = {
-        numRoundsPerPlayer: ((numPlayers: number) => (numPlayers <= 3 ? 3 : (numPlayers == 4 || numPlayers == 5) ? 2 : 1))(1 + lobbyMachineState.otherClients.length)
+        numRoundsPerPlayer: ((numPlayers: number) => (numPlayers <= 3 ? 3 : (numPlayers == 4 || numPlayers == 5) ? 2 : 1))(1 + lobbyMachineState.otherClients.length),
+        generalPoolContractCounts: (
+          ((1 + lobbyMachineState.otherClients.length) <= 3)
+            ? ProductArray.newArray([48, 36, 0, 24, 2, 1, 2, 0, 0, 0, 1, 18, 16, 9, 5])
+            : ProductArray.newArray([48, 36, 36, 24, 2, 2, 2, 1, 2, 1, 2, 22, 21, 12, 5])
+        ),
       };
 
       const onClickStart = function () {
@@ -366,13 +385,19 @@ export default function MenuLobby(props: MenuLobbyProps) {
         } else {
           const startGameData: NetworkTypes.ServerStartGameEventData = {
             gameSettings: {
-              numRounds:
+              numRounds: (
                 (1 + lobbyMachineState.otherClients.length)
                 * (
                   (lobbyMachineState.hostInfo.gameSettings.numRoundsPerPlayer.type === "recommended")
                     ? recommendedGameSettings.numRoundsPerPlayer
                     : lobbyMachineState.hostInfo.gameSettings.numRoundsPerPlayer.value
                 )
+              ),
+              generalPoolContractCounts: (
+                (lobbyMachineState.hostInfo.gameSettings.generalPoolContractCounts.type === "recommended")
+                  ? recommendedGameSettings.generalPoolContractCounts.arr
+                  : lobbyMachineState.hostInfo.gameSettings.generalPoolContractCounts.value.arr
+              ),
             }
           };
 
@@ -432,7 +457,6 @@ export default function MenuLobby(props: MenuLobbyProps) {
         );
       })();
 
-
       return (
         <div id="menu_lobby">
           {
@@ -489,7 +513,6 @@ export default function MenuLobby(props: MenuLobbyProps) {
                                 min="1"
                                 value={hostInfo.gameSettings.numRoundsPerPlayer.value}
                                 max="9"
-                                width={2}
                                 onChange={(e) => {
                                   setLobbyMachineState({
                                     ...lobbyMachineState,
@@ -520,6 +543,95 @@ export default function MenuLobby(props: MenuLobbyProps) {
                       );
                     })()
                   }
+                  <br></br>
+                  <div>
+                    <span style={{ display: "inline-block", verticalAlign: "top" }}>
+                      <button
+                        onClick={(_e) => {
+                          setLobbyMachineState({
+                            ...lobbyMachineState,
+                            hostInfo: {
+                              ...hostInfo,
+                              gameSettings: {
+                                ...hostInfo.gameSettings,
+                                generalPoolContractCounts: (
+                                  (hostInfo.gameSettings.generalPoolContractCounts.type === "recommended")
+                                    ? { type: "custom", value: recommendedGameSettings.generalPoolContractCounts }
+                                    : { type: "recommended" }
+                                )
+                              }
+                            }
+                          });
+                        }}
+                      >
+                        {(hostInfo.gameSettings.numRoundsPerPlayer.type === "recommended") ? "(edit)" : "(undo)"}
+                      </button>
+                      {" "}
+                    </span>
+                    <span style={{ display: "inline-block", verticalAlign: "top" }}
+                    >
+                      <span>Number of Supply Contracts: ({(
+                        (hostInfo.gameSettings.generalPoolContractCounts.type === "recommended"
+                          ? recommendedGameSettings.generalPoolContractCounts
+                          : hostInfo.gameSettings.generalPoolContractCounts.value
+                        ).arr.reduce((a, b) => a + b)
+                      )} total)</span>
+                      {
+                        (() => {
+                          return productInfos.arr
+                            .groupBy(p => p.award.hasValue === true ? p.award.value.productType as number : 9999)
+                            .sort((a, b) => a.key - b.key)
+                            .map(g => (
+                              <div key={`game_settings_general_pool_contract_counts_group_${g.key}`}>
+                                {
+                                  g.group.map(p => (
+                                    <span key={`game_settings_general_pool_contract_counts_product_${p.type}`}>
+                                      <span>{p.icon}</span>
+                                      {
+                                        (() => {
+                                          const generalPoolContractCounts = hostInfo.gameSettings.generalPoolContractCounts;
+                                          return (generalPoolContractCounts.type === "recommended")
+                                            ? (
+                                              <span>{recommendedGameSettings.generalPoolContractCounts.get(p.type)}</span>
+                                            )
+                                            : (
+                                              <input
+                                                type="number"
+                                                min="0"
+                                                value={generalPoolContractCounts.value.get(p.type)}
+                                                max="999"
+                                                onChange={(e) => {
+                                                  setLobbyMachineState({
+                                                    ...lobbyMachineState,
+                                                    hostInfo: {
+                                                      ...hostInfo,
+                                                      gameSettings: {
+                                                        ...hostInfo.gameSettings,
+                                                        generalPoolContractCounts: {
+                                                          type: "custom",
+                                                          value:
+                                                            generalPoolContractCounts.value
+                                                              .shallowCopy()
+                                                              .set(p.type, parseInt(e.target.value)),
+                                                        }
+                                                      }
+                                                    }
+                                                  });
+                                                }}
+                                              ></input>
+                                            );
+                                        })()
+                                      }
+                                      {" "}
+                                    </span>
+                                  ))
+                                }
+                              </div>
+                            ));
+                        })()
+                      }
+                    </span>
+                  </div>
                   <br></br>
                 </div>
               )
