@@ -2,7 +2,7 @@ import * as React from "react";
 
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
 import * as NetworkTypes from "../../core/network_types";
-import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings } from "../../core/game_types";
+import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings, officerIcon } from "../../core/game_types";
 import { Optional, getRandomInt, nullopt, omitAttrs, opt } from "../../core/util";
 
 import AnimatedEllipses from "../elements/animated_ellipses";
@@ -3589,121 +3589,137 @@ export default function MenuGame(props: MenuGameProps) {
       <Section style={{ overflowX: "auto", overflowY: "hidden", whiteSpace: "nowrap", textAlign: "center" }}>
         {
           props.clients
-            .map((c, i) => { return { ...c, clientIndex: i }; })
-            .arr.filter(client => client.clientId != props.localInfo.clientId)
-            .filter(otherClient => clientGameState.localOfficer == true || iPlayerToNum(clientGameState.iPlayerOfficer) != iPlayerToNum(otherClient.clientIndex))
-            .map(otherTrader => {
+            .map((client, iPlayer) => {
               return (
                 <Section
-                  key={`menu_game_traders_${otherTrader.clientIndex.value}`}
-                  title={`Trader ${otherTrader.name}`}
+                  key={`menu_game_traders_${iPlayer.value}`}
+                  title={`${(
+                    iPlayerToNum(iPlayer) === iPlayerToNum(iPlayerOfficer)
+                      ? `${officerIcon}Officer`
+                      : "Trader"
+                  )} ${client.name}`}
                   style={{ display: "inline-block", verticalAlign: "top" }}
                 >
-                  <div>
-                    <TraderSuppliesTable
-                      style={{ display: "inline-block", verticalAlign: "top" }}
-                      key={`menu_game_traders_${otherTrader.clientIndex.value}_supplies_rerender_${renderCount.current}`}
-                      usekey={`menu_game_traders_${otherTrader.clientIndex.value}_supplies`}
-                      supplies={currentTraderSupplies.get(otherTrader.clientIndex)}
-                      iPlayerOwner={otherTrader.clientIndex}
-                      animation={animation}
-                      type={"other"}
-                    />
-                    <FloatingAnimatedCart
-                      style={{ display: "inline-block", verticalAlign: "top" }}
-                      key={`menu_game_traders_${otherTrader.clientIndex.value}_animated_cart_rerender_${renderCount.current}`}
-                      location="Trader Supplies"
-                      iPlayerOwner={otherTrader.clientIndex}
-                      iPlayerLocal={iPlayerLocal}
-                      active={!(
-                        (
-                          clientGameState.state == "CustomsIntro"
-                          && (
-                            (clientGameState.introState == "ready" && clientGameState.localActiveTrader == false && iPlayerToNum(otherTrader.clientIndex) == iPlayerToNum(clientGameState.iPlayerActiveTrader))
-                            || (clientGameState.introState == "animating" && iPlayerToNum(otherTrader.clientIndex) == iPlayerToNum( // previous trader exiting (note no need to check this trader is officer)
-                              props.clients.incrementIndexModLength((clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader), -1)
-                            ))
-                          )
-                        )
-                        || (
-                          clientGameState.state == "Customs"
-                          && (
-                            (clientGameState.customsState != "ready" && clientGameState.localActiveTrader == false && iPlayerToNum(clientGameState.iPlayerActiveTrader) == iPlayerToNum(otherTrader.clientIndex)
-                              && (clientGameState.customsState != "interrogating" || clientGameState.interrogatingState != "cart entering"))
-                            || (clientGameState.customsState == "ready" && clientGameState.readyState.state == "transitioning" && iPlayerToNum(otherTrader.clientIndex) == iPlayerToNum(clientGameState.readyState.iPlayerExitingCart))
-                          )
-                        )
-                      )}
-                      animation={animation}
-                      contents={(() => {
-                        switch (clientGameState.state) {
-                          case "Swap":
-                          case "Refresh":
-                            return { labeled: false, state: "no crate" }
-                          case "Pack":
-                          case "CustomsIntro":
-                          case "Customs": {
-                            const cartState =
-                              (clientGameState.state == "Pack")
-                                ? clientGameState.otherCartStates.get(otherTrader.clientIndex)
-                                : clientGameState.cartStates.get(otherTrader.clientIndex);
+                  { // supplies and cart
+                    (iPlayerToNum(iPlayer) === iPlayerToNum(iPlayerLocal))
+                      ? (
+                        <div>(you)</div>
+                      )
+                      : (
+                        <div>
+                          <TraderSuppliesTable
+                            style={{ display: "inline-block", verticalAlign: "top" }}
+                            key={`menu_game_traders_${iPlayer.value}_supplies_rerender_${renderCount.current}`}
+                            usekey={`menu_game_traders_${iPlayer.value}_supplies`}
+                            supplies={currentTraderSupplies.get(iPlayer)}
+                            iPlayerOwner={iPlayer}
+                            animation={animation}
+                            type={"other"}
+                          />
+                          <FloatingAnimatedCart
+                            style={{ display: "inline-block", verticalAlign: "top" }}
+                            key={`menu_game_traders_${iPlayer.value}_animated_cart_rerender_${renderCount.current}`}
+                            location="Trader Supplies"
+                            iPlayerOwner={iPlayer}
+                            iPlayerLocal={iPlayerLocal}
+                            active={!(
+                              (
+                                clientGameState.state == "CustomsIntro"
+                                && (
+                                  (clientGameState.introState == "ready" && clientGameState.localActiveTrader == false && iPlayerToNum(iPlayer) == iPlayerToNum(clientGameState.iPlayerActiveTrader))
+                                  || (clientGameState.introState == "animating" && iPlayerToNum(iPlayer) == iPlayerToNum( // previous trader exiting (note no need to check this trader is officer)
+                                    props.clients.incrementIndexModLength((clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader), -1)
+                                  ))
+                                )
+                              )
+                              || (
+                                clientGameState.state == "Customs"
+                                && (
+                                  (clientGameState.customsState != "ready" && clientGameState.localActiveTrader == false && iPlayerToNum(clientGameState.iPlayerActiveTrader) == iPlayerToNum(iPlayer)
+                                    && (clientGameState.customsState != "interrogating" || clientGameState.interrogatingState != "cart entering"))
+                                  || (clientGameState.customsState == "ready" && clientGameState.readyState.state == "transitioning" && iPlayerToNum(iPlayer) == iPlayerToNum(clientGameState.readyState.iPlayerExitingCart))
+                                )
+                              )
+                            )}
+                            animation={animation}
+                            contents={(() => {
+                              switch (clientGameState.state) {
+                                case "Swap":
+                                case "Refresh":
+                                  return { labeled: false, state: "no crate" }
+                                case "Pack":
+                                case "CustomsIntro":
+                                case "Customs": {
+                                  const cartState =
+                                    (clientGameState.state == "Pack")
+                                      ? clientGameState.otherCartStates.get(iPlayer)
+                                      : clientGameState.cartStates.get(iPlayer);
 
-                            const isUnrevealedCustomsIntroPlayer =
-                              clientGameState.state == "CustomsIntro"
-                              && toSequentialTraderOrdering(otherTrader.clientIndex) >= toSequentialTraderOrdering(clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader);
+                                  const isUnrevealedCustomsIntroPlayer =
+                                    clientGameState.state == "CustomsIntro"
+                                    && toSequentialTraderOrdering(iPlayer) >= toSequentialTraderOrdering(clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader);
 
-                            if (cartState.packed) {
-                              if (
-                                (clientGameState.state == "CustomsIntro" && !isUnrevealedCustomsIntroPlayer)
-                                || clientGameState.state == "Customs"
-                              ) {
-                                return {
-                                  labeled: true,
-                                  count: cartState.cart.count,
-                                  productType: opt(cartState.cart.claimedType),
-                                  state: "closed crate"
-                                };
-                              } else {
-                                return { labeled: false, state: "closed crate" };
-                              }
-                            } else {
-                              return {
-                                labeled: false,
-                                state: (() => {
-                                  if (iPlayerToNum(iPlayerOfficer) == iPlayerToNum(otherTrader.clientIndex)) {
-                                    return "no crate";
-                                  } else if (clientGameState.state == "Pack") { // trader is packing
-                                    return "open crate";
-                                  } else { // Customs crate unpacked
-                                    return "no crate";
+                                  if (cartState.packed) {
+                                    if (
+                                      (clientGameState.state == "CustomsIntro" && !isUnrevealedCustomsIntroPlayer)
+                                      || clientGameState.state == "Customs"
+                                    ) {
+                                      return {
+                                        labeled: true,
+                                        count: cartState.cart.count,
+                                        productType: opt(cartState.cart.claimedType),
+                                        state: "closed crate"
+                                      };
+                                    } else {
+                                      return { labeled: false, state: "closed crate" };
+                                    }
+                                  } else {
+                                    return {
+                                      labeled: false,
+                                      state: (() => {
+                                        if (iPlayerToNum(iPlayerOfficer) == iPlayerToNum(iPlayer)) {
+                                          return "no crate";
+                                        } else if (clientGameState.state == "Pack") { // trader is packing
+                                          return "open crate";
+                                        } else { // Customs crate unpacked
+                                          return "no crate";
+                                        }
+                                      })()
+                                    };
                                   }
-                                })()
-                              };
-                            }
-                          }
-                        }
-                      })()}
-                      officerTools={{
-                        present: false,
-                        controls: {
-                          localControllable: false,
-                          registerEventHandlers: (_args) => ({ handlerRegistrationId: -1 }),
-                          unregisterEventHandlers: (_args) => { }
-                        }
-                      }}
-                    />
-                  </div>
+                                }
+                              }
+                            })()}
+                            officerTools={{
+                              present: false,
+                              controls: {
+                                localControllable: false,
+                                registerEventHandlers: (_args) => ({ handlerRegistrationId: -1 }),
+                                unregisterEventHandlers: (_args) => { }
+                              }
+                            }}
+                          />
+                        </div>
+                      )
+                  }
                   { // status message
                     (() => {
                       switch (clientGameState.state) {
                         case "Swap":
-                          if (clientGameState.localActiveTrader == false && iPlayerToNum(clientGameState.iPlayerActiveTrader) == iPlayerToNum(otherTrader.clientIndex)) {
+                          if (
+                            (clientGameState.localActiveTrader === true && iPlayerToNum(iPlayer) === iPlayerToNum(iPlayerLocal))
+                            || (clientGameState.localActiveTrader == false && iPlayerToNum(clientGameState.iPlayerActiveTrader) == iPlayerToNum(iPlayer))
+                          ) {
                             return (<span>Swapping Supply Contracts<AnimatedEllipses /></span>);
                           }
                           return;
 
                         case "Pack":
-                          if (clientGameState.otherCartStates.get(otherTrader.clientIndex).packed == false) {
+                          if (
+                            (iPlayerToNum(iPlayer) === iPlayerToNum(iPlayerLocal))
+                              ? (clientGameState.localOfficer === false && clientGameState.localState === "packing")
+                              : (iPlayerToNum(iPlayer) !== iPlayerToNum(iPlayerOfficer) && clientGameState.otherCartStates.get(iPlayer).packed == false)
+                          ) {
                             return (<span>Packing Cart<AnimatedEllipses /></span>);
                           }
                           return;
@@ -3720,8 +3736,9 @@ export default function MenuGame(props: MenuGameProps) {
                       if (
                         clientGameState.state == "Customs"
                         && clientGameState.customsState == "ready"
-                        && clientGameState.localOfficer
-                        && clientGameState.cartStates.get(otherTrader.clientIndex).packed == true
+                        && clientGameState.localOfficer === true
+                        && iPlayerToNum(iPlayer) !== iPlayerToNum(iPlayerLocal)
+                        && clientGameState.cartStates.get(iPlayer).packed == true
                       ) {
                         return (
                           <button
@@ -3732,7 +3749,7 @@ export default function MenuGame(props: MenuGameProps) {
                                   sourceClientId: props.localInfo.clientId,
                                   action: {
                                     action: "resume interrogation",
-                                    iPlayerTrader: otherTrader.clientIndex.value,
+                                    iPlayerTrader: iPlayer.value,
                                   }
                                 }
                               });
@@ -3748,6 +3765,7 @@ export default function MenuGame(props: MenuGameProps) {
                 </Section>
               );
             })
+            .arr
         }
       </Section>
 
@@ -4297,27 +4315,6 @@ export default function MenuGame(props: MenuGameProps) {
                     : undefined
                 }
               </Section>
-            </Section>
-
-            <Section title={`Officer ${clientGameState.localOfficer == true ? props.localInfo.localPlayerName : props.clients.get(clientGameState.iPlayerOfficer).name}`}
-              style={{ display: "inline-block", verticalAlign: "top" }}
-            >
-              <div>
-                {
-                  (clientGameState.localOfficer == true)
-                    ? (<span>(you)</span>)
-                    : (
-                      <TraderSuppliesTable
-                        key={`menu_game_traders_${clientGameState.iPlayerOfficer.value}_supplies_rerender_${renderCount.current}`}
-                        usekey={`menu_game_traders_${clientGameState.iPlayerOfficer.value}_supplies`}
-                        supplies={currentTraderSupplies.get(clientGameState.iPlayerOfficer)}
-                        iPlayerOwner={clientGameState.iPlayerOfficer}
-                        animation={animation}
-                        type={"other"}
-                      />
-                    )
-                }
-              </div>
             </Section>
           </div>
         </Section>

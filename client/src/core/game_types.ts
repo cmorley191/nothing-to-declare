@@ -1,6 +1,7 @@
 import { Optional, getRandomInt, nullopt, nullopt_t, opt } from "./util";
 
 export const playerIcons = ["😘", "😈", "🎅🏽", "🧙🏽", "💩", "💀", "🤡", "👻", "👽", "🤖", "😹", "🐵"];
+export const officerIcon = "⚖️";
 export const illegalProductIcon = "⛓️";
 export const legalProductIcon = "✅";
 export const rareProductIcon = "✨";

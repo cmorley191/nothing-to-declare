@@ -564,7 +564,7 @@ export default function MenuLobby(props: MenuLobbyProps) {
                           });
                         }}
                       >
-                        {(hostInfo.gameSettings.numRoundsPerPlayer.type === "recommended") ? "(edit)" : "(undo)"}
+                        {(hostInfo.gameSettings.generalPoolContractCounts.type === "recommended") ? "(edit)" : "(undo)"}
                       </button>
                       {" "}
                     </span>

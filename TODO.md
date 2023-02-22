@@ -1,7 +1,7 @@
 ## 1.1 TODO
 - (DONE) game settings
   - initially just number of rounds
-- officer indicator along top instead of an officer section
+- (DONE) officer indicator along top instead of an officer section
 - reference chart of products
 - game setting: swap modes -- simple or strategic
   - simple: swap and pack in the same stage, simultaneously with other traders. no taking contracts from recycle pool (recycle pool does not exist)
