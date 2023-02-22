@@ -1,5 +1,5 @@
 ## 1.1 TODO
-- game settings
+- (DONE) game settings
   - initially just number of rounds
 - officer indicator along top instead of an officer section
 - reference chart of products

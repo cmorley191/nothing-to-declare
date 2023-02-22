@@ -1,7 +1,7 @@
 import * as React from "react";
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
 import * as NetworkTypes from "../../core/network_types";
-import { playerIcons } from "../../core/game_types";
+import { GameSettings, playerIcons } from "../../core/game_types";
 import { Optional, nullopt, opt } from "../../core/util";
 import AnimatedEllipses from "../elements/animated_ellipses";
 
@@ -17,12 +17,26 @@ type MenuLobbyProps = {
   ws: BufferedWebSocket,
 
   onClose: (args: { warning: string }) => void
-  onStartGame: (args: { hostInfo: NetworkTypes.HostClientInfo, finalLocalName: string, otherClients: NetworkTypes.ClientInfo[] }) => void
+  onStartGame: (args: { hostInfo: NetworkTypes.HostClientInfo, gameSettings: GameSettings, finalLocalName: string, otherClients: NetworkTypes.ClientInfo[] }) => void
 };
+
+type HostInfo =
+  & NetworkTypes.HostClientInfo
+  & (
+    | {
+      localHost: true,
+      gameSettings: {
+        numRoundsPerPlayer:
+        | { type: "recommended" }
+        | { type: "custom", value: number }
+      }
+    }
+    | { localHost: false, }
+  )
 
 type LobbyMachineState =
   | { state: "Entering" } // entering state only used for non-host client
-  | { state: "Entered", hostInfo: NetworkTypes.HostClientInfo, selectedPlayerIcon: Optional<string>, otherClients: NetworkTypes.ClientInfo[], otherPlayerIcons: Optional<string>[] };
+  | { state: "Entered", hostInfo: HostInfo, selectedPlayerIcon: Optional<string>, otherClients: NetworkTypes.ClientInfo[], otherPlayerIcons: Optional<string>[] };
 
 export default function MenuLobby(props: MenuLobbyProps) {
   const localClientInfo: NetworkTypes.ClientInfo = {
@@ -53,7 +67,12 @@ export default function MenuLobby(props: MenuLobbyProps) {
     props.localInfo.isHost
       ? {
         state: "Entered",
-        hostInfo: { localHost: true },
+        hostInfo: {
+          localHost: true,
+          gameSettings: {
+            numRoundsPerPlayer: { type: "recommended" }
+          }
+        },
         selectedPlayerIcon: nullopt,
         otherClients: [],
         otherPlayerIcons: [],
@@ -203,6 +222,7 @@ export default function MenuLobby(props: MenuLobbyProps) {
             }
             props.onStartGame({
               hostInfo: lobbyMachineState.hostInfo,
+              gameSettings: event.data.gameSettings,
               finalLocalName: `${lobbyMachineState.selectedPlayerIcon.hasValue == true ? lobbyMachineState.selectedPlayerIcon.value : ""}${props.localInfo.localPlayerName}`,
               otherClients: otherPlayers.map(([c, icon]) => ({
                 ...c,
@@ -330,7 +350,13 @@ export default function MenuLobby(props: MenuLobbyProps) {
         }
       });
 
+      const recommendedGameSettings = {
+        numRoundsPerPlayer: ((numPlayers: number) => (numPlayers <= 3 ? 3 : (numPlayers == 4 || numPlayers == 5) ? 2 : 1))(1 + lobbyMachineState.otherClients.length)
+      };
+
       const onClickStart = function () {
+        if (lobbyMachineState.hostInfo.localHost === false) return; // should be impossible
+
         if (lobbyMachineState.otherClients.length < 2) {
           alert("The game does not support fewer than three players!");
         } else if (lobbyMachineState.otherClients.length > 9) {
@@ -338,15 +364,26 @@ export default function MenuLobby(props: MenuLobbyProps) {
         } else if (lobbyMachineState.selectedPlayerIcon.hasValue == false || lobbyMachineState.otherPlayerIcons.some(icon => icon.hasValue == false)) {
           alert("Everyone must select a player icon before starting!");
         } else {
+          const startGameData: NetworkTypes.ServerStartGameEventData = {
+            gameSettings: {
+              numRounds:
+                (1 + lobbyMachineState.otherClients.length)
+                * (
+                  (lobbyMachineState.hostInfo.gameSettings.numRoundsPerPlayer.type === "recommended")
+                    ? recommendedGameSettings.numRoundsPerPlayer
+                    : lobbyMachineState.hostInfo.gameSettings.numRoundsPerPlayer.value
+                )
+            }
+          };
+
           props.ws.ws.send(`MSG|${lobbyMachineState.otherClients.map(x => x.clientId).join(",")}`
-            + `|${NetworkTypes.ServerEventType.START_GAME}|${JSON.stringify({} satisfies NetworkTypes.ServerStartGameEventData)}`
+            + `|${NetworkTypes.ServerEventType.START_GAME}|${JSON.stringify(startGameData satisfies NetworkTypes.ServerStartGameEventData)}`
           );
           clientHandleReceivedServerEvent({
             type: NetworkTypes.ServerEventType.START_GAME,
-            data: {}
+            data: startGameData
           })
         }
-
       }
 
       const onClickLeave = function () {
@@ -390,11 +427,11 @@ export default function MenuLobby(props: MenuLobbyProps) {
 
         return (
           <span>
-            Players:<br></br>
             {lines}
           </span>
         );
       })();
+
 
       return (
         <div id="menu_lobby">
@@ -409,6 +446,85 @@ export default function MenuLobby(props: MenuLobbyProps) {
           }
           <button onClick={() => onClickLeave()} >Leave</button>
           <br></br>
+          {
+            (() => {
+              const hostInfo = lobbyMachineState.hostInfo;
+              if (hostInfo.localHost === false) return undefined;
+              else return (
+                <div>
+                  <h4>Game Settings:</h4>
+                  <button
+                    onClick={(_e) => {
+                      setLobbyMachineState({
+                        ...lobbyMachineState,
+                        hostInfo: {
+                          ...hostInfo,
+                          gameSettings: {
+                            ...hostInfo.gameSettings,
+                            numRoundsPerPlayer: (
+                              (hostInfo.gameSettings.numRoundsPerPlayer.type === "recommended")
+                                ? { type: "custom", value: recommendedGameSettings.numRoundsPerPlayer }
+                                : { type: "recommended" }
+                            )
+                          }
+                        }
+                      });
+                    }}
+                  >
+                    {(hostInfo.gameSettings.numRoundsPerPlayer.type === "recommended") ? "(edit)" : "(undo)"}
+                  </button>
+                  <span>{" "}Rounds per player:{" "}</span>
+                  {
+                    (() => {
+                      const [roundsPerPlayerEle, numRoundsPerPlayer] = (
+                        (hostInfo.gameSettings.numRoundsPerPlayer.type === "recommended")
+                          ? [
+                            (<span>{recommendedGameSettings.numRoundsPerPlayer}</span>),
+                            recommendedGameSettings.numRoundsPerPlayer
+                          ]
+                          : [
+                            (
+                              <input
+                                type="number"
+                                min="1"
+                                value={hostInfo.gameSettings.numRoundsPerPlayer.value}
+                                max="9"
+                                width={2}
+                                onChange={(e) => {
+                                  setLobbyMachineState({
+                                    ...lobbyMachineState,
+                                    hostInfo: {
+                                      ...hostInfo,
+                                      gameSettings: {
+                                        ...hostInfo.gameSettings,
+                                        numRoundsPerPlayer: {
+                                          type: "custom",
+                                          value: parseInt(e.target.value)
+                                        }
+                                      }
+                                    }
+                                  });
+                                }}
+                              />
+                            ),
+                            hostInfo.gameSettings.numRoundsPerPlayer.value
+                          ]
+                      );
+
+                      return (
+                        <span>
+                          {roundsPerPlayerEle}
+                          {" "}
+                          <span>({numRoundsPerPlayer * (1 + lobbyMachineState.otherClients.length)} total rounds)</span>
+                        </span>
+                      );
+                    })()
+                  }
+                  <br></br>
+                </div>
+              )
+            })()
+          }
           <div>
             <h4>Select a player icon:</h4>
             {
@@ -443,6 +559,7 @@ export default function MenuLobby(props: MenuLobbyProps) {
             }
 
           </div>
+          <h4>Players:</h4>
           <p>{playerListHtml}</p>
         </div >
       );

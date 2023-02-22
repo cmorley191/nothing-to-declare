@@ -5,7 +5,7 @@ import BufferedWebSocket from "../core/buffered_websocket";
 import * as NetworkTypes from "../core/network_types";
 import MenuLobby from "./menus/lobby";
 import MenuGame from "./menus/game";
-import { PlayerArray } from "../core/game_types";
+import { GameSettings, PlayerArray } from "../core/game_types";
 
 type AppProps = {};
 
@@ -20,7 +20,7 @@ type AppMachineState =
   | { state: "Lobby", connectInfo: ConnectInfo, ws: BufferedWebSocket, localClientIsHost: boolean, clientId: number }
   | {
     state: "Game", connectInfo: ConnectInfo, ws: BufferedWebSocket,
-    hostInfo: NetworkTypes.HostClientInfo, clientId: number, otherClients: NetworkTypes.ClientInfo[]
+    hostInfo: NetworkTypes.HostClientInfo, gameSettings: GameSettings, clientId: number, otherClients: NetworkTypes.ClientInfo[]
   };
 
 export default function App({ }: AppProps) {
@@ -120,7 +120,7 @@ export default function App({ }: AppProps) {
             });
           }}
 
-          onStartGame={({ hostInfo, finalLocalName, otherClients }) => {
+          onStartGame={({ hostInfo, gameSettings, finalLocalName, otherClients }) => {
             appMachineState.ws.unsetHandlers();
 
             setAppMachineState({
@@ -132,7 +132,8 @@ export default function App({ }: AppProps) {
               ws: appMachineState.ws,
               clientId: appMachineState.clientId,
               hostInfo,
-              otherClients
+              otherClients,
+              gameSettings,
             });
           }}
         />
@@ -158,6 +159,7 @@ export default function App({ }: AppProps) {
           hostInfo={appMachineState.hostInfo}
           ws={appMachineState.ws}
 
+          settings={appMachineState.gameSettings}
           clients={clients.value}
 
           onClose={({ warning }) => {

@@ -1,4 +1,4 @@
-import { IgnoreDeal, ProductType, SerializableServerGameState } from "./game_types";
+import { GameSettings, IgnoreDeal, ProductType, SerializableServerGameState } from "./game_types";
 import { Optional, Result } from "./util";
 
 export interface ClientInfo {
@@ -109,7 +109,9 @@ export interface ServerPlayerIconsUpdateEventData {
   clientId: number,
   playerIcon: Optional<string>,
 };
-export interface ServerStartGameEventData { };
+export interface ServerStartGameEventData {
+  gameSettings: GameSettings,
+};
 export interface ServerStateUpdateEventData {
   state: SerializableServerGameState
 }

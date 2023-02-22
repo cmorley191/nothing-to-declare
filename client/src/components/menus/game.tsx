@@ -2,7 +2,7 @@ import * as React from "react";
 
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
 import * as NetworkTypes from "../../core/network_types";
-import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, PlayerCount, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, numRoundsPerPlayer, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum } from "../../core/game_types";
+import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, PlayerCount, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings } from "../../core/game_types";
 import { Optional, getRandomInt, nullopt, omitAttrs, opt } from "../../core/util";
 
 import AnimatedEllipses from "../elements/animated_ellipses";
@@ -27,6 +27,7 @@ type LocalInfo = {
 type MenuGameProps = {
   localInfo: LocalInfo,
   hostInfo: NetworkTypes.HostClientInfo,
+  settings: GameSettings,
   clients: PlayerArray<NetworkTypes.ClientInfo>,
   ws: BufferedWebSocket,
 
@@ -2875,7 +2876,7 @@ export default function MenuGame(props: MenuGameProps) {
 
                 // check for end of game
                 const newRound = serverGameState.round + 1;
-                if (newRound >= numRoundsPerPlayer(props.clients.length) * props.clients.length) {
+                if (newRound >= props.settings.numRounds) {
                   return opt({
                     state: "GameEnd",
                     finalTraderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr }))
@@ -3541,7 +3542,7 @@ export default function MenuGame(props: MenuGameProps) {
     <div id="menu_game">
       <Section id="menu_game_title">
         <div>
-          Round {clientGameState.round + 1} of {numRoundsPerPlayer(props.clients.length) * props.clients.length}: {(() => {
+          Round {clientGameState.round + 1} of {props.settings.numRounds}: {(() => {
             switch (clientGameState.state) {
               case "Swap":
                 return "Exchange Supply Contracts";

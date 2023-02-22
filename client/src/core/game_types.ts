@@ -195,7 +195,6 @@ export function getProductInfo(type: ProductType) {
 
 export type PlayerCount = 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10
 export const readyPoolSize = 6;
-export const numRoundsPerPlayer = (numPlayers: PlayerCount) => numPlayers == 3 ? 3 : numPlayers == 4 ? 2 : numPlayers == 5 ? 2 : 1;
 
 export type ValidatedPlayerIndex = {
   validIPlayer: true,
@@ -276,6 +275,11 @@ export class PlayerArray<T> {
       return opt([x, y] as [T, U]);
     }));
   }
+};
+
+
+export type GameSettings = {
+  numRounds: number,
 };
 
 
