@@ -3,7 +3,7 @@
   - initially just number of rounds
 - (DONE) officer indicator along top instead of an officer section
 - (DONE) reference chart of products
-- game setting: swap modes -- simple or strategic
+- (WIP) game setting: swap modes -- simple or strategic
   - simple: swap and pack in the same stage, simultaneously with other traders. no taking contracts from recycle pool (recycle pool does not exist)
   - strategic: swap sequentially, taking and recycling contracts via recycle pool. then pack simultaneously (start packing as soon as local swap complete)
 - chat window with game log

@@ -281,14 +281,16 @@ export class PlayerArray<T> {
   }
 };
 
-
+export type SwapMode = "simple" | "strategic";
 export type GameSettings = {
   numRounds: number,
   generalPoolContractCounts: ProductArray<number>,
+  swapMode: SwapMode,
 };
 export type SerializableGameSettings = {
   numRounds: number,
   generalPoolContractCounts: number[],
+  swapMode: SwapMode,
 }
 
 
@@ -350,7 +352,8 @@ export type SerializableServerRoundGameState =
   & { round: number, iPlayerOfficer: number }
 
 export type ServerGameState =
-  | ({ state: "SwapPack", iPlayerActiveSwapTrader: Optional<ValidatedPlayerIndex>, cartStates: PlayerArray<CartState> } & ServerRoundGameState)
+  | ({ state: "SimpleSwapPack", tradersSwapping: PlayerArray<boolean>, cartStates: PlayerArray<CartState> } & ServerRoundGameState)
+  | ({ state: "StrategicSwapPack", iPlayerActiveSwapTrader: Optional<ValidatedPlayerIndex>, cartStates: PlayerArray<CartState> } & ServerRoundGameState)
   | ({ state: "CustomsIntro", cartStates: PlayerArray<CartState>, iPlayerActiveTrader: ValidatedPlayerIndex } & ServerRoundGameState)
   | (
     & { state: "Customs", cartStates: PlayerArray<CartState> }
@@ -371,7 +374,8 @@ export type ServerGameState =
   | ({ state: "Refresh" } & ServerRoundGameState)
   | ({ state: "GameEnd", finalTraderSupplies: PlayerArray<TraderSupplies> })
 export type SerializableServerGameState =
-  | ({ state: "SwapPack", iPlayerActiveSwapTrader: Optional<number>, cartStates: CartState[] } & SerializableServerRoundGameState)
+  | ({ state: "SimpleSwapPack", tradersSwapping: boolean[], cartStates: CartState[] } & SerializableServerRoundGameState)
+  | ({ state: "StrategicSwapPack", iPlayerActiveSwapTrader: Optional<number>, cartStates: CartState[] } & SerializableServerRoundGameState)
   | ({ state: "CustomsIntro", cartStates: CartState[], iPlayerActiveTrader: number } & SerializableServerRoundGameState)
   | (
     & { state: "Customs", cartStates: CartState[] }
@@ -404,7 +408,28 @@ export type ClientRoundGameState =
 export type ClientGameState = (
   | { state: "Setup", }
   | (
-    & { state: "SwapPack", otherCartStates: PlayerArray<CartState> }
+    & { state: "SimpleSwapPack", otherTradersSwapping: PlayerArray<boolean>, otherCartStates: PlayerArray<CartState> }
+    & (
+      | ({ localActiveSwapTrader: false } & ClientRoundGameState)
+      | ({ localActiveSwapTrader: true } & TraderClientRoundGameState)
+    )
+    & (
+      | OfficerClientRoundGameState
+      | (
+        & TraderClientRoundGameState
+        & (
+          | { localActiveSwapTrader: true }
+          | (
+            | { localState: "waiting" }
+            | { localState: "packing", selectedReadyPoolProductsForPacking: boolean[], claimedProductType: Optional<ProductType>, claimMessage: string }
+            | { localState: "done", localCart: ClaimedCart }
+          )
+        )
+      )
+    )
+  )
+  | (
+    & { state: "StrategicSwapPack", otherCartStates: PlayerArray<CartState> }
     & (
       | ({ localActiveSwapTrader: false, iPlayerActiveSwapTrader: Optional<ValidatedPlayerIndex> } & ClientRoundGameState)
       | ({ localActiveSwapTrader: true } & TraderClientRoundGameState)

@@ -1,7 +1,7 @@
 import * as React from "react";
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
 import * as NetworkTypes from "../../core/network_types";
-import { GameSettings, ProductArray, playerIcons, productInfos } from "../../core/game_types";
+import { GameSettings, ProductArray, SwapMode, playerIcons, productInfos } from "../../core/game_types";
 import { Optional, nullopt, opt } from "../../core/util";
 import AnimatedEllipses from "../elements/animated_ellipses";
 
@@ -32,6 +32,7 @@ type HostInfo =
         generalPoolContractCounts:
         | { type: "recommended" }
         | { type: "custom", value: ProductArray<number> },
+        swapMode: SwapMode,
       }
     }
     | { localHost: false, }
@@ -75,6 +76,7 @@ export default function MenuLobby(props: MenuLobbyProps) {
           gameSettings: {
             numRoundsPerPlayer: { type: "recommended" },
             generalPoolContractCounts: { type: "recommended" },
+            swapMode: "simple",
           }
         },
         selectedPlayerIcon: nullopt,
@@ -236,6 +238,7 @@ export default function MenuLobby(props: MenuLobbyProps) {
               gameSettings: {
                 numRounds: event.data.gameSettings.numRounds,
                 generalPoolContractCounts: deserializedGeneralPoolContractCounts.value,
+                swapMode: event.data.gameSettings.swapMode,
               },
               finalLocalName: `${lobbyMachineState.selectedPlayerIcon.hasValue == true ? lobbyMachineState.selectedPlayerIcon.value : ""}${props.localInfo.localPlayerName}`,
               otherClients: otherPlayers.map(([c, icon]) => ({
@@ -398,6 +401,7 @@ export default function MenuLobby(props: MenuLobbyProps) {
                   ? recommendedGameSettings.generalPoolContractCounts.arr
                   : lobbyMachineState.hostInfo.gameSettings.generalPoolContractCounts.value.arr
               ),
+              swapMode: lobbyMachineState.hostInfo.gameSettings.swapMode,
             }
           };
 
@@ -631,6 +635,27 @@ export default function MenuLobby(props: MenuLobbyProps) {
                         })()
                       }
                     </span>
+                  </div>
+                  <br></br>
+                  <div>
+                    <span>Supply Contract Exchange Mode:</span>
+                    <select
+                      onChange={(e) => {
+                        setLobbyMachineState({
+                          ...lobbyMachineState,
+                          hostInfo: {
+                            ...hostInfo,
+                            gameSettings: {
+                              ...hostInfo.gameSettings,
+                              swapMode: e.target.value === "simple" ? "simple" : "strategic",
+                            }
+                          }
+                        })
+                      }}
+                    >
+                      <option selected value="simple">Simple</option>
+                      <option value="strategic">Strategic</option>
+                    </select>
                   </div>
                   <br></br>
                 </div>
