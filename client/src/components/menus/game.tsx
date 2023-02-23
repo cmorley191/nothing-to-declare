@@ -2,7 +2,7 @@ import * as React from "react";
 
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
 import * as NetworkTypes from "../../core/network_types";
-import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings, officerIcon } from "../../core/game_types";
+import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings, officerIcon, contractIcon } from "../../core/game_types";
 import { Optional, getRandomInt, nullopt, omitAttrs, opt } from "../../core/util";
 
 import AnimatedEllipses from "../elements/animated_ellipses";
@@ -796,6 +796,96 @@ function TraderSuppliesTable(props: {
 }
 
 /**
+ * (Element) A parchment listing a particular product type and its information.
+ */
+function SupplyContract(props: {
+  productType: Optional<ProductType>,
+  [otherOptions: string]: unknown
+}) {
+  const attrs = omitAttrs(['productType'], props);
+
+  const contractMarginPx = 10;
+
+  return (
+    <div
+      {...attrs}
+      style={{ position: "relative", ...((attrs['style'] !== undefined ? attrs['style'] : {})) }}
+    >
+      <div>
+        <div style={{
+          whiteSpace: "nowrap",
+          margin: `${contractMarginPx}px`,
+        }}>
+          <div style={{
+            display: "inline-block",
+            fontSize: "200%",
+            width: "100%",
+            textAlign: "center",
+          }}>
+            {props.productType.hasValue === true ? getProductInfo(props.productType.value).icon : unknownProductIcon}
+          </div>
+          <div style={{
+            width: "100%",
+            textAlign: "center",
+          }}>
+            {
+              (props.productType.hasValue === true)
+                ? (
+                  <span>
+                    {getProductInfo(props.productType.value).legal ? legalProductIcon : illegalProductIcon}
+                    {" "}
+                    {pointIcon}{getProductInfo(props.productType.value).value}
+                    {" "}
+                    {fineIcon}{getProductInfo(props.productType.value).fine}
+                  </span>
+                )
+                : (
+                  <span style={{ opacity: 0 }}>
+                    {unknownProductIcon}{" "}{pointIcon}{0}{" "}{fineIcon}{0}
+                  </span>
+                )
+            }
+          </div>
+          <div style={{
+            width: "100%",
+            textAlign: "center",
+          }}>
+            {
+              (() => {
+                const award = (props.productType.hasValue == true ? getProductInfo(props.productType.value).award : nullopt);
+                if (award.hasValue == false) {
+                  return (
+                    <span style={{ opacity: 0, fontSize: "60%" }}>
+                      {trophyIcon}{": "}{unknownProductIcon}
+                    </span>
+                  )
+                } else {
+                  return (
+                    <span style={{ fontSize: "60%" }}>
+                      {trophyIcon}{": "}{Array(award.value.points).fill(getProductInfo(award.value.productType).icon).join("")}
+                    </span>
+                  )
+                }
+              })()
+            }
+          </div>
+        </div>
+      </div>
+      <img
+        src={props.productType.hasValue === false || getProductInfo(props.productType.value).category === "legal" ? parchmentLegalImgSrc : parchmentIllegalImgSrc}
+        style={{
+          position: "absolute",
+          left: 0,
+          top: `-${contractMarginPx}px`,
+          width: "100%",
+          zIndex: -2,
+        }}
+      />
+    </div>
+  );
+}
+
+/**
  * (Element) One of the tables of supply contracts in the local ready pool display.
  */
 function LocalReadyPoolSupplyContracts(props: {
@@ -811,7 +901,6 @@ function LocalReadyPoolSupplyContracts(props: {
   const attrs = omitAttrs(['usekey', 'contracts', 'onClick'], props);
 
   const contractsPerRow = 3;
-  const contractMarginPx = 10;
 
   return (
     <div {...attrs} key={props.usekey}>
@@ -837,78 +926,7 @@ function LocalReadyPoolSupplyContracts(props: {
                       }}
                       onClick={(event) => { if (c.clickable && props.onClick !== undefined) props.onClick({ event: event.nativeEvent, iContract: c.iContract }) }}
                     >
-                      <div style={{ position: "relative" }}>
-                        <div>
-                          <div style={{
-                            whiteSpace: "nowrap",
-                            margin: `${contractMarginPx}px`,
-                          }}>
-                            <div style={{
-                              display: "inline-block",
-                              fontSize: "200%",
-                              width: "100%",
-                              textAlign: "center",
-                            }}>
-                              {c.productType.hasValue === true ? getProductInfo(c.productType.value).icon : unknownProductIcon}
-                            </div>
-                            <div style={{
-                              width: "100%",
-                              textAlign: "center",
-                            }}>
-                              {
-                                (c.productType.hasValue === true)
-                                  ? (
-                                    <span>
-                                      {getProductInfo(c.productType.value).legal ? legalProductIcon : illegalProductIcon}
-                                      {" "}
-                                      {pointIcon}{getProductInfo(c.productType.value).value}
-                                      {" "}
-                                      {fineIcon}{getProductInfo(c.productType.value).fine}
-                                    </span>
-                                  )
-                                  : (
-                                    <span style={{ opacity: 0 }}>
-                                      {unknownProductIcon}{" "}{pointIcon}{0}{" "}{fineIcon}{0}
-                                    </span>
-                                  )
-                              }
-                            </div>
-                            <div style={{
-                              width: "100%",
-                              textAlign: "center",
-                            }}>
-                              {
-                                (() => {
-                                  const award = (c.productType.hasValue == true ? getProductInfo(c.productType.value).award : nullopt);
-                                  if (award.hasValue == false) {
-                                    return (
-                                      <span style={{ opacity: 0, fontSize: "60%" }}>
-                                        {trophyIcon}{": "}{unknownProductIcon}
-                                      </span>
-                                    )
-                                  } else {
-                                    return (
-                                      <span style={{ fontSize: "60%" }}>
-                                        {trophyIcon}{": "}{Array(award.value.points).fill(getProductInfo(award.value.productType).icon).join("")}
-                                      </span>
-                                    )
-                                  }
-                                })()
-                              }
-                            </div>
-                          </div>
-                        </div>
-                        <img
-                          src={c.productType.hasValue === false || getProductInfo(c.productType.value).category === "legal" ? parchmentLegalImgSrc : parchmentIllegalImgSrc}
-                          style={{
-                            position: "absolute",
-                            left: 0,
-                            top: `-${contractMarginPx}px`,
-                            width: "100%",
-                            zIndex: -2,
-                          }}
-                        />
-                      </div>
+                      <SupplyContract productType={c.productType} />
                     </td>
                   ))
                     .concat(Array((iRow == 0) ? 0 : contractsPerRow - g.length).fill(false).map((_blank, iBlank) => (
@@ -4916,6 +4934,31 @@ export default function MenuGame(props: MenuGameProps) {
           </Section>
         </div>
       </Section >
+
+      <Section title={"Product Reference"}
+        style={{ overflowX: "auto", overflowY: "hidden", whiteSpace: "nowrap", textAlign: "center" }}
+      >
+        {
+          productInfos
+            .map((p) => (
+              <div
+                key={`menu_game_product_reference_${p.type}`}
+                style={{ display: "inline-block", verticalAlign: "top" }}
+              >
+                <div>
+                  <span style={{ position: "relative" }}>
+                    <span style={{ opacity: 0 }}>{contractIcon}</span>
+                    <span style={{ position: "absolute", left: "0px", top: "-5px" }}>{contractIcon}</span>
+                    <span style={{ position: "absolute", left: "4px", top: "-2px" }}>{contractIcon}</span>
+                  </span>
+                  <span>{" "}{props.settings.generalPoolContractCounts.get(p.type)}x</span>
+                </div>
+                <SupplyContract productType={opt(p.type)} />
+              </div>
+            ))
+            .arr
+        }
+      </Section>
     </div >
   )
 }
