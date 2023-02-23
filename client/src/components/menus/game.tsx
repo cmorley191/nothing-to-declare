@@ -833,7 +833,7 @@ function LocalReadyPoolSupplyContracts(props: {
                       style={{
                         opacity: (c.style === "visible") ? 1 : (c.style == "faded") ? 0.3 : 0,
                         display: "inline-block",
-                        width: `${Math.floor(100 / g.length) - 1}%`,
+                        width: `${Math.floor(100 / (iRow == 0 ? g.length : contractsPerRow)) - 1}%`,
                       }}
                       onClick={(event) => { if (c.clickable && props.onClick !== undefined) props.onClick({ event: event.nativeEvent, iContract: c.iContract }) }}
                     >
@@ -911,6 +911,15 @@ function LocalReadyPoolSupplyContracts(props: {
                       </div>
                     </td>
                   ))
+                    .concat(Array((iRow == 0) ? 0 : contractsPerRow - g.length).fill(false).map((_blank, iBlank) => (
+                      <td
+                        key={`${props.usekey}_supply_contract_blank_${iRow}_${iBlank}`}
+                        style={{
+                          display: "inline-block",
+                          width: `${Math.floor(100 / (iRow == 0 ? g.length : contractsPerRow)) - 1}%`,
+                        }}
+                      ></td>
+                    )))
                 }
               </tr>
             ))
