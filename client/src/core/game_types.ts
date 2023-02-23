@@ -350,8 +350,7 @@ export type SerializableServerRoundGameState =
   & { round: number, iPlayerOfficer: number }
 
 export type ServerGameState =
-  | ({ state: "Swap", iPlayerActiveTrader: ValidatedPlayerIndex } & ServerRoundGameState)
-  | ({ state: "Pack", cartStates: PlayerArray<CartState> } & ServerRoundGameState)
+  | ({ state: "SwapPack", iPlayerActiveSwapTrader: Optional<ValidatedPlayerIndex>, cartStates: PlayerArray<CartState> } & ServerRoundGameState)
   | ({ state: "CustomsIntro", cartStates: PlayerArray<CartState>, iPlayerActiveTrader: ValidatedPlayerIndex } & ServerRoundGameState)
   | (
     & { state: "Customs", cartStates: PlayerArray<CartState> }
@@ -372,8 +371,7 @@ export type ServerGameState =
   | ({ state: "Refresh" } & ServerRoundGameState)
   | ({ state: "GameEnd", finalTraderSupplies: PlayerArray<TraderSupplies> })
 export type SerializableServerGameState =
-  | ({ state: "Swap", iPlayerActiveTrader: number } & SerializableServerRoundGameState)
-  | ({ state: "Pack", cartStates: CartState[] } & SerializableServerRoundGameState)
+  | ({ state: "SwapPack", iPlayerActiveSwapTrader: Optional<number>, cartStates: CartState[] } & SerializableServerRoundGameState)
   | ({ state: "CustomsIntro", cartStates: CartState[], iPlayerActiveTrader: number } & SerializableServerRoundGameState)
   | (
     & { state: "Customs", cartStates: CartState[] }
@@ -406,21 +404,22 @@ export type ClientRoundGameState =
 export type ClientGameState = (
   | { state: "Setup", }
   | (
-    & { state: "Swap" }
+    & { state: "SwapPack", otherCartStates: PlayerArray<CartState> }
     & (
-      | ({ localActiveTrader: false, iPlayerActiveTrader: ValidatedPlayerIndex } & ClientRoundGameState)
-      | ({ localActiveTrader: true } & TraderClientRoundGameState)
+      | ({ localActiveSwapTrader: false, iPlayerActiveSwapTrader: Optional<ValidatedPlayerIndex> } & ClientRoundGameState)
+      | ({ localActiveSwapTrader: true } & TraderClientRoundGameState)
     )
-  )
-  | (
-    & { state: "Pack", otherCartStates: PlayerArray<CartState> }
     & (
       | OfficerClientRoundGameState
       | (
         & TraderClientRoundGameState
         & (
-          | { localState: "packing", selectedReadyPoolProductsForPacking: boolean[], claimedProductType: Optional<ProductType>, claimMessage: string }
-          | { localState: "done", localCart: ClaimedCart }
+          | { localActiveSwapTrader: true }
+          | (
+            | { localState: "waiting" }
+            | { localState: "packing", selectedReadyPoolProductsForPacking: boolean[], claimedProductType: Optional<ProductType>, claimMessage: string }
+            | { localState: "done", localCart: ClaimedCart }
+          )
         )
       )
     )

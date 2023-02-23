@@ -16,6 +16,19 @@ export type nullopt_t = { hasValue: false }
 export const nullopt: nullopt_t = { hasValue: false };
 export function opt<T>(value: T): { hasValue: true, value: T } { return { hasValue: true, value } }
 
+export function optMap<T, U>(o: Optional<T>, mapper: (value: T) => U): Optional<U> {
+  if (o.hasValue === false) return nullopt;
+  else return opt(mapper(o.value));
+}
+export function optBind<T, U>(o: Optional<T>, binding: (value: T) => Optional<U>): Optional<U> {
+  if (o.hasValue === false) return nullopt;
+  else return binding(o.value);
+}
+export function optValueOr<T>(o: Optional<T>, defaultValue: T): T {
+  if (o.hasValue === true) return o.value;
+  else return defaultValue;
+}
+
 export function omitAttrs(omit: string[], attrs: any): { [otherOptions: string]: unknown } {
   const result: any = {};
   Object.keys(attrs).forEach((key) => {

@@ -3,7 +3,7 @@ import * as React from "react";
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
 import * as NetworkTypes from "../../core/network_types";
 import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings, officerIcon, contractIcon } from "../../core/game_types";
-import { Optional, getRandomInt, nullopt, omitAttrs, opt } from "../../core/util";
+import { Optional, getRandomInt, nullopt, omitAttrs, opt, optMap } from "../../core/util";
 
 import AnimatedEllipses from "../elements/animated_ellipses";
 import Keyframes from "../elements/keyframes";
@@ -1988,6 +1988,8 @@ export default function MenuGame(props: MenuGameProps) {
     return (<div>An error occurred.</div>);
   }
 
+  const toSequentialTraderOrderingRaw = (args: { iPlayer: ValidPlayerIndex, iPlayerOfficer: ValidPlayerIndex }) => (iPlayerToNum(args.iPlayer) + props.clients.length - iPlayerToNum(args.iPlayerOfficer) - 1) % props.clients.length;
+
   const renderCount = React.useRef(0);
   React.useEffect(() => { renderCount.current++; });
 
@@ -2026,27 +2028,18 @@ export default function MenuGame(props: MenuGameProps) {
         // this should never happen
         return { state: "GameEnd", finalTraderSupplies: generateInitialPersistentGameState(props.settings, props.clients).traderSupplies };
 
-      case "Swap":
+      case "SwapPack":
         return {
-          state: "Swap",
+          state: "SwapPack",
           round: clientGameState.round,
           communityPools: clientGameState.communityPools,
           traderSupplies: clientGameState.traderSupplies,
           iPlayerOfficer: clientGameState.localOfficer == true ? iPlayerLocal : clientGameState.iPlayerOfficer,
-          iPlayerActiveTrader: clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader,
-        };
-
-      case "Pack":
-        return {
-          state: "Pack",
-          round: clientGameState.round,
-          communityPools: clientGameState.communityPools,
-          traderSupplies: clientGameState.traderSupplies,
-          iPlayerOfficer: clientGameState.localOfficer == true ? iPlayerLocal : clientGameState.iPlayerOfficer,
+          iPlayerActiveSwapTrader: clientGameState.localActiveSwapTrader == true ? opt(iPlayerLocal) : clientGameState.iPlayerActiveSwapTrader,
           cartStates: (() => {
             const states = clientGameState.otherCartStates.shallowCopy();
             states.set(iPlayerLocal,
-              (clientGameState.localOfficer == true || clientGameState.localState == "packing")
+              (clientGameState.localOfficer === true || clientGameState.localActiveSwapTrader === true || clientGameState.localState !== "done")
                 ? { packed: false }
                 : { packed: true, cart: clientGameState.localCart }
             );
@@ -2147,7 +2140,7 @@ export default function MenuGame(props: MenuGameProps) {
       case NetworkTypes.ServerEventType.STATE_UPDATE: {
         // convert [new server state + current client state] to new client state
         switch (event.data.state.state) {
-          case "Swap": {
+          case "SwapPack": {
             const eventTraderSupplies = (() => {
               const supplies = event.data.state.traderSupplies.everyTransform(s => {
                 const shopProductCounts = ProductArray.tryNewArray(s.shopProductCounts);
@@ -2158,86 +2151,76 @@ export default function MenuGame(props: MenuGameProps) {
               return props.clients.tryNewPlayerArray(supplies.value);
             })();
             const eventIPlayerOfficer = props.clients.validateIndex(event.data.state.iPlayerOfficer);
-            const eventIPlayerActiveTrader = props.clients.validateIndex(event.data.state.iPlayerActiveTrader);
-            if (eventTraderSupplies.hasValue === false || eventIPlayerOfficer.hasValue === false || eventIPlayerActiveTrader.hasValue === false) {
-              console.log(`Received bad STATE_UPDATE: ${JSON.stringify(event)}`);
-              break;
-            }
-            setClientGameState({
-              state: "Swap",
-              round: event.data.state.round,
-              communityPools: event.data.state.communityPools,
-              traderSupplies: eventTraderSupplies.value,
-              ...((iPlayerToNum(iPlayerLocal) == iPlayerToNum(eventIPlayerOfficer.value))
-                ? { localOfficer: true, localActiveTrader: false, iPlayerActiveTrader: eventIPlayerActiveTrader.value }
-                : {
-                  localOfficer: false,
-                  iPlayerOfficer: eventIPlayerOfficer.value,
-                  ...((iPlayerToNum(iPlayerLocal) == iPlayerToNum(eventIPlayerActiveTrader.value))
-                    ? {
-                      localActiveTrader: true,
-                      // We must not've been the localActiveTrader before, so simply start fresh instead of checking for existing selected list:
-                      selectedSupplyContractsFromReadyPool: Array(readyPoolSize).fill(false)
-                    }
-                    : { localActiveTrader: false, iPlayerActiveTrader: eventIPlayerActiveTrader.value }
-                  )
-                }
-              ),
-            });
-          } break;
-
-          case "Pack": {
-            const eventTraderSupplies = (() => {
-              const supplies = event.data.state.traderSupplies.everyTransform(s => {
-                const shopProductCounts = ProductArray.tryNewArray(s.shopProductCounts);
-                if (shopProductCounts.hasValue === false) return nullopt;
-                return opt({ ...s, shopProductCounts: shopProductCounts.value });
-              });
-              if (supplies.hasValue === false) return nullopt;
-              return props.clients.tryNewPlayerArray(supplies.value);
-            })();
+            const eventIPlayerActiveSwapTrader: Optional<Optional<ValidatedPlayerIndex>> = (
+              (event.data.state.iPlayerActiveSwapTrader.hasValue === true)
+                ? optMap(props.clients.validateIndex(event.data.state.iPlayerActiveSwapTrader.value), (i) => opt(i))
+                : opt(nullopt)
+            );
             const eventCartStates = props.clients.tryNewPlayerArray(event.data.state.cartStates);
-            const eventIPlayerOfficer = props.clients.validateIndex(event.data.state.iPlayerOfficer);
-            if (eventTraderSupplies.hasValue === false || eventCartStates.hasValue === false || eventIPlayerOfficer.hasValue === false) {
+            if (eventTraderSupplies.hasValue === false
+              || eventIPlayerOfficer.hasValue === false
+              || eventIPlayerActiveSwapTrader.hasValue === false
+              || eventCartStates.hasValue === false) {
               console.log(`Received bad STATE_UPDATE: ${JSON.stringify(event)}`);
               break;
             }
             setClientGameState({
-              state: "Pack",
+              state: "SwapPack",
               round: event.data.state.round,
               communityPools: event.data.state.communityPools,
               traderSupplies: eventTraderSupplies.value,
               otherCartStates: eventCartStates.value,
-              ...((iPlayerToNum(iPlayerLocal) == iPlayerToNum(eventIPlayerOfficer.value))
-                ? { localOfficer: true }
-                : {
-                  localOfficer: false,
-                  iPlayerOfficer: eventIPlayerOfficer.value,
-                  ...((() => {
-                    const localCart = eventCartStates.value.get(iPlayerLocal);
+              ...(
+                (iPlayerToNum(iPlayerLocal) == iPlayerToNum(eventIPlayerOfficer.value))
+                  ? { localOfficer: true, localActiveSwapTrader: false, iPlayerActiveSwapTrader: eventIPlayerActiveSwapTrader.value }
+                  : {
+                    localOfficer: false,
+                    iPlayerOfficer: eventIPlayerOfficer.value,
+                    ...(
+                      (
+                        eventIPlayerActiveSwapTrader.value.hasValue === true
+                        && iPlayerToNum(iPlayerLocal) == iPlayerToNum(eventIPlayerActiveSwapTrader.value.value)
+                      )
+                        ? { localActiveSwapTrader: true }
+                        : {
+                          localActiveSwapTrader: false,
+                          iPlayerActiveSwapTrader: eventIPlayerActiveSwapTrader.value,
+                          ...((() => {
+                            const localCart = eventCartStates.value.get(iPlayerLocal);
 
-                    if (localCart.packed == true) {
-                      return {
-                        localState: "done",
-                        localCart: localCart.cart
-                      };
-                    } else if (clientGameState.state == "Pack" && clientGameState.localOfficer == false && clientGameState.localState == "packing") {
-                      return {
-                        localState: "packing",
-                        selectedReadyPoolProductsForPacking: clientGameState.selectedReadyPoolProductsForPacking,
-                        claimedProductType: clientGameState.claimedProductType,
-                        claimMessage: clientGameState.claimMessage
-                      };
-                    } else {
-                      return {
-                        localState: "packing",
-                        selectedReadyPoolProductsForPacking: Array(readyPoolSize).fill(false),
-                        claimedProductType: { hasValue: false },
-                        claimMessage: ""
-                      };
-                    }
-                  })())
-                }
+                            if (eventIPlayerActiveSwapTrader.value.hasValue === true
+                              && (
+                                toSequentialTraderOrderingRaw({ iPlayer: eventIPlayerActiveSwapTrader.value.value, iPlayerOfficer: eventIPlayerOfficer.value })
+                                < toSequentialTraderOrderingRaw({ iPlayer: iPlayerLocal, iPlayerOfficer: eventIPlayerOfficer.value })
+                              )
+                            ) {
+                              return {
+                                localState: "waiting",
+                              };
+                            } else if (localCart.packed == true) {
+                              return {
+                                localState: "done",
+                                localCart: localCart.cart
+                              };
+                            } else if (clientGameState.state == "SwapPack" && clientGameState.localOfficer == false && clientGameState.localActiveSwapTrader == false && clientGameState.localState == "packing") {
+                              return {
+                                localState: "packing",
+                                selectedReadyPoolProductsForPacking: clientGameState.selectedReadyPoolProductsForPacking,
+                                claimedProductType: clientGameState.claimedProductType,
+                                claimMessage: clientGameState.claimMessage
+                              };
+                            } else {
+                              return {
+                                localState: "packing",
+                                selectedReadyPoolProductsForPacking: Array(readyPoolSize).fill(false),
+                                claimedProductType: { hasValue: false },
+                                claimMessage: ""
+                              };
+                            }
+                          })())
+                        }
+                    )
+                  }
               ),
             });
           } break;
@@ -2472,15 +2455,19 @@ export default function MenuGame(props: MenuGameProps) {
         break;
 
       case NetworkTypes.ClientEventType.SWAP_SUPPLY_CONTRACTS: {
-        if (serverGameState.state == "Swap" && props.clients.get(serverGameState.iPlayerActiveTrader).clientId == event.data.sourceClientId) {
+        if (serverGameState.state == "SwapPack"
+          && serverGameState.iPlayerActiveSwapTrader.hasValue === true
+          && props.clients.get(serverGameState.iPlayerActiveSwapTrader.value).clientId == event.data.sourceClientId
+        ) {
           const nextState: Optional<SerializableServerGameState> = (() => {
-            const iPlayerNext = props.clients.incrementIndexModLength(serverGameState.iPlayerActiveTrader, 1);
+            const iPlayerNext = props.clients.incrementIndexModLength(serverGameState.iPlayerActiveSwapTrader.value, 1);
+
             const newPools: CommunityContractPools = {
               generalPoolContractCounts: serverGameState.communityPools.generalPoolContractCounts.shallowCopy(),
               recyclePoolsContracts: [serverGameState.communityPools.recyclePoolsContracts[0]?.shallowCopy() ?? []].concat(serverGameState.communityPools.recyclePoolsContracts.skip(1))
             };
             const readyPoolRecycling =
-              serverGameState.traderSupplies.get(serverGameState.iPlayerActiveTrader).readyPool
+              serverGameState.traderSupplies.get(serverGameState.iPlayerActiveSwapTrader.value).readyPool
                 .zip(event.data.recycled);
             if (readyPoolRecycling === undefined) {
               console.log(`Received bad SWAP_SUPPLY_CONTRACTS client event: ${JSON.stringify(event)}`);
@@ -2491,29 +2478,22 @@ export default function MenuGame(props: MenuGameProps) {
             newReadyPool.push(...takeContractsFromGeneralPool(props.settings, newPools, readyPoolRecycled.length));
             (newPools.recyclePoolsContracts[0] ?? []).push(...readyPoolRecycled);
             const newTraderSupplies = serverGameState.traderSupplies.shallowCopy();
-            newTraderSupplies.set(serverGameState.iPlayerActiveTrader, {
-              ...serverGameState.traderSupplies.get(serverGameState.iPlayerActiveTrader),
+            newTraderSupplies.set(serverGameState.iPlayerActiveSwapTrader.value, {
+              ...serverGameState.traderSupplies.get(serverGameState.iPlayerActiveSwapTrader.value),
               readyPool: newReadyPool
             });
-            if (iPlayerToNum(iPlayerNext) != iPlayerToNum(serverGameState.iPlayerOfficer)) {
-              return opt({
-                state: "Swap",
-                round: serverGameState.round,
-                communityPools: newPools,
-                traderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
-                iPlayerOfficer: serverGameState.iPlayerOfficer.value,
-                iPlayerActiveTrader: iPlayerNext.value,
-              });
-            } else {
-              return opt({
-                state: "Pack",
-                round: serverGameState.round,
-                communityPools: newPools,
-                traderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
-                iPlayerOfficer: serverGameState.iPlayerOfficer.value,
-                cartStates: props.clients.map(() => { return { "packed": false as false }; }).arr
-              });
-            }
+            return opt({
+              state: "SwapPack",
+              round: serverGameState.round,
+              communityPools: newPools,
+              traderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+              iPlayerOfficer: serverGameState.iPlayerOfficer.value,
+              iPlayerActiveSwapTrader:
+                (iPlayerToNum(iPlayerNext) === iPlayerToNum(serverGameState.iPlayerOfficer))
+                  ? nullopt
+                  : opt(iPlayerNext.value),
+              cartStates: serverGameState.cartStates.arr,
+            });
           })();
           if (nextState.hasValue === false) break;
 
@@ -2537,7 +2517,18 @@ export default function MenuGame(props: MenuGameProps) {
           console.trace();
           break;
         }
-        if (serverGameState.state == "Pack" && iPlayerToNum(serverGameState.iPlayerOfficer) != iPlayerToNum(iPlayerEvent) && serverGameState.cartStates.get(iPlayerEvent).packed == false) {
+        if (
+          serverGameState.state == "SwapPack"
+          && iPlayerToNum(serverGameState.iPlayerOfficer) !== iPlayerToNum(iPlayerEvent)
+          && (
+            serverGameState.iPlayerActiveSwapTrader.hasValue === false
+            || (
+              toSequentialTraderOrderingRaw({ iPlayer: iPlayerEvent, iPlayerOfficer: serverGameState.iPlayerOfficer })
+              < toSequentialTraderOrderingRaw({ iPlayer: serverGameState.iPlayerActiveSwapTrader.value, iPlayerOfficer: serverGameState.iPlayerOfficer })
+            )
+          )
+          && serverGameState.cartStates.get(iPlayerEvent).packed === false
+        ) {
           const nextState: Optional<SerializableServerGameState> = (() => {
             const readyPoolPacking =
               serverGameState.traderSupplies.get(iPlayerEvent).readyPool
@@ -2579,11 +2570,12 @@ export default function MenuGame(props: MenuGameProps) {
               });
             } else {
               return opt({
-                state: "Pack",
+                state: "SwapPack",
                 round: serverGameState.round,
                 communityPools: serverGameState.communityPools,
                 traderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
                 iPlayerOfficer: serverGameState.iPlayerOfficer.value,
+                iPlayerActiveSwapTrader: optMap(serverGameState.iPlayerActiveSwapTrader, (i => i.value)),
                 cartStates: newCartStates.arr
               });
             }
@@ -2898,12 +2890,13 @@ export default function MenuGame(props: MenuGameProps) {
                   });
                 } else {
                   return opt({
-                    state: "Swap",
+                    state: "SwapPack",
                     round: newRound,
                     communityPools: newPools,
                     traderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
                     iPlayerOfficer: props.clients.incrementIndexModLength(serverGameState.iPlayerOfficer, 1).value,
-                    iPlayerActiveTrader: props.clients.incrementIndexModLength(serverGameState.iPlayerOfficer, 2).value,
+                    iPlayerActiveSwapTrader: opt(props.clients.incrementIndexModLength(serverGameState.iPlayerOfficer, 2).value),
+                    cartStates: props.clients.map(() => { return { "packed": false as false }; }).arr,
                   });
                 }
               } else {
@@ -2999,12 +2992,13 @@ export default function MenuGame(props: MenuGameProps) {
       const iPlayerOfficer = props.clients.getRandomIndex();
       const persistentGameState = generateInitialPersistentGameState(props.settings, props.clients);
       const state: SerializableServerGameState = {
-        state: "Swap",
+        state: "SwapPack",
         round: 0,
         communityPools: persistentGameState.communityPools,
         traderSupplies: persistentGameState.traderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
         iPlayerOfficer: iPlayerOfficer.value,
-        iPlayerActiveTrader: props.clients.incrementIndexModLength(iPlayerOfficer, 1).value
+        iPlayerActiveSwapTrader: opt(props.clients.incrementIndexModLength(iPlayerOfficer, 1).value),
+        cartStates: props.clients.map(() => { return { "packed": false as false }; }).arr,
       };
       props.ws.ws.send(`MSG|${props.clients.arr.filter(x => x.clientId != props.localInfo.clientId).map(x => x.clientId).join(",")}`
         + `|${NetworkTypes.ServerEventType.STATE_UPDATE}|${JSON.stringify({ state } satisfies NetworkTypes.ServerStateUpdateEventData)}`
@@ -3182,7 +3176,7 @@ export default function MenuGame(props: MenuGameProps) {
   }
 
   const iPlayerOfficer = clientGameState.localOfficer == true ? iPlayerLocal : clientGameState.iPlayerOfficer;
-  const toSequentialTraderOrdering = (iPlayer: ValidatedPlayerIndex) => (iPlayer.value + props.clients.length - iPlayerOfficer.value - 1) % props.clients.length;
+  const toSequentialTraderOrdering = (iPlayer: ValidPlayerIndex) => toSequentialTraderOrderingRaw({ iPlayer, iPlayerOfficer });
 
   const currentTraderSupplies =
     clientGameState.state == "Customs" && clientGameState.customsState == "resolving"
@@ -3193,9 +3187,8 @@ export default function MenuGame(props: MenuGameProps) {
   const animation: Optional<GameAnimationSequence> = (() => {
     const animationSequence = ((): Optional<{ sequence: GameAnimationStep[], onComplete: () => void }> => {
       switch (clientGameState.state) {
-        case "Swap":
+        case "SwapPack":
         case "Refresh":
-        case "Pack":
           return nullopt;
         case "CustomsIntro": {
           const iPlayerActiveTrader = clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader;
@@ -3559,10 +3552,8 @@ export default function MenuGame(props: MenuGameProps) {
         <div>
           Round {clientGameState.round + 1} of {props.settings.numRounds}: {(() => {
             switch (clientGameState.state) {
-              case "Swap":
-                return "Exchange Supply Contracts";
-              case "Pack":
-                return "Prepare Cart";
+              case "SwapPack":
+                return "Exchange Supply Contracts & Prepare Cart";
               case "CustomsIntro":
                 return "Introductions";
               case "Customs":
@@ -3575,20 +3566,16 @@ export default function MenuGame(props: MenuGameProps) {
         <div>
           {(() => {
             switch (clientGameState.state) {
-              case "Swap":
+              case "SwapPack":
                 return (clientGameState.localOfficer == true)
-                  ? (<span>Wait while traders exchange supply contracts<AnimatedEllipses /></span>)
-                  : (clientGameState.localActiveTrader == true)
+                  ? (<span>Wait while traders exchange supply contracts and pack their carts with products<AnimatedEllipses /></span>)
+                  : (clientGameState.localActiveSwapTrader == true)
                     ? "Recycle and replace your supply contracts"
-                    : (toSequentialTraderOrdering(iPlayerLocal) <= toSequentialTraderOrdering(clientGameState.iPlayerActiveTrader))
-                      ? (<span>Wait while the remaining traders exchange supply contracts<AnimatedEllipses /></span>)
-                      : (<span>Wait for your turn to exchange supply contracts<AnimatedEllipses /></span>);
-              case "Pack":
-                return (clientGameState.localOfficer == true)
-                  ? (<span>Wait while traders pack their carts with products<AnimatedEllipses /></span>)
-                  : (clientGameState.localState == "packing")
-                    ? "Select products to pack into your cart, and decide which kind of legal product you'll tell the officer your cart contains"
-                    : (<span>Wait while the remaining traders pack their carts<AnimatedEllipses /></span>);
+                    : (clientGameState.localState === "waiting")
+                      ? (<span>Wait for your turn to exchange supply contracts and pack your cart<AnimatedEllipses /></span>)
+                      : (clientGameState.localState === "packing")
+                        ? "Select products to pack into your cart, and decide which kind of legal product you'll tell the officer your cart contains"
+                        : (<span>Wait while the remaining traders exchange supply contracts and pack their carts<AnimatedEllipses /></span>);
               case "CustomsIntro":
                 return (clientGameState.localOfficer == true)
                   ? "Listen to what each trader says is in their cart (you will decide whether to search them at a later time)"
@@ -3671,14 +3658,13 @@ export default function MenuGame(props: MenuGameProps) {
                             animation={animation}
                             contents={(() => {
                               switch (clientGameState.state) {
-                                case "Swap":
                                 case "Refresh":
                                   return { labeled: false, state: "no crate" }
-                                case "Pack":
+                                case "SwapPack":
                                 case "CustomsIntro":
                                 case "Customs": {
                                   const cartState =
-                                    (clientGameState.state == "Pack")
+                                    (clientGameState.state == "SwapPack")
                                       ? clientGameState.otherCartStates.get(iPlayer)
                                       : clientGameState.cartStates.get(iPlayer);
 
@@ -3706,9 +3692,17 @@ export default function MenuGame(props: MenuGameProps) {
                                       state: (() => {
                                         if (iPlayerToNum(iPlayerOfficer) == iPlayerToNum(iPlayer)) {
                                           return "no crate";
-                                        } else if (clientGameState.state == "Pack") { // trader is packing
+                                        } else if (clientGameState.state == "SwapPack"
+                                          && (
+                                            (clientGameState.localActiveSwapTrader === true)
+                                              ? (toSequentialTraderOrdering(iPlayer) < toSequentialTraderOrdering(iPlayerLocal))
+                                              : (clientGameState.iPlayerActiveSwapTrader.hasValue === false)
+                                                ? true
+                                                : (toSequentialTraderOrdering(iPlayer) < toSequentialTraderOrdering(clientGameState.iPlayerActiveSwapTrader.value))
+                                          )
+                                        ) { // trader is packing
                                           return "open crate";
-                                        } else { // Customs crate unpacked
+                                        } else { // trader is swapping, or Customs crate unpacked
                                           return "no crate";
                                         }
                                       })()
@@ -3732,20 +3726,34 @@ export default function MenuGame(props: MenuGameProps) {
                   { // status message
                     (() => {
                       switch (clientGameState.state) {
-                        case "Swap":
+                        case "SwapPack":
                           if (
-                            (clientGameState.localActiveTrader === true && iPlayerToNum(iPlayer) === iPlayerToNum(iPlayerLocal))
-                            || (clientGameState.localActiveTrader == false && iPlayerToNum(clientGameState.iPlayerActiveTrader) == iPlayerToNum(iPlayer))
+                            (clientGameState.localActiveSwapTrader === true && iPlayerToNum(iPlayer) === iPlayerToNum(iPlayerLocal))
+                            || (
+                              clientGameState.localActiveSwapTrader == false
+                              && clientGameState.iPlayerActiveSwapTrader.hasValue === true
+                              && iPlayerToNum(clientGameState.iPlayerActiveSwapTrader.value) == iPlayerToNum(iPlayer)
+                            )
                           ) {
                             return (<span>Swapping Supply Contracts<AnimatedEllipses /></span>);
-                          }
-                          return;
-
-                        case "Pack":
-                          if (
+                          } else if (
                             (iPlayerToNum(iPlayer) === iPlayerToNum(iPlayerLocal))
-                              ? (clientGameState.localOfficer === false && clientGameState.localState === "packing")
-                              : (iPlayerToNum(iPlayer) !== iPlayerToNum(iPlayerOfficer) && clientGameState.otherCartStates.get(iPlayer).packed == false)
+                              ? (
+                                clientGameState.localOfficer === false
+                                && clientGameState.localActiveSwapTrader === false
+                                && clientGameState.localState === "packing"
+                              )
+                              : (
+                                iPlayerToNum(iPlayer) !== iPlayerToNum(iPlayerOfficer)
+                                && (
+                                  clientGameState.localActiveSwapTrader === true
+                                    ? (toSequentialTraderOrdering(iPlayer) < toSequentialTraderOrdering(iPlayerLocal))
+                                    : (clientGameState.iPlayerActiveSwapTrader.hasValue === false)
+                                      ? true
+                                      : (toSequentialTraderOrdering(iPlayer) < toSequentialTraderOrdering(clientGameState.iPlayerActiveSwapTrader.value))
+                                )
+                                && clientGameState.otherCartStates.get(iPlayer).packed == false
+                              )
                           ) {
                             return (<span>Packing Cart<AnimatedEllipses /></span>);
                           }
@@ -4347,14 +4355,17 @@ export default function MenuGame(props: MenuGameProps) {
         </Section>
         <Section id="menu_game_working_prep" style={{ overflowX: "auto", overflowY: "hidden", whiteSpace: "nowrap", textAlign: "center" }} >
           { // <Section Claim Cart Contents
-            (clientGameState.localOfficer == false && clientGameState.state == "Pack" && clientGameState.localState == "packing")
+            (
+              clientGameState.localOfficer == false
+              && clientGameState.state == "SwapPack"
+              && clientGameState.localActiveSwapTrader === false
+              && clientGameState.localState == "packing"
+            )
               ? (
                 <Section
                   title="Prepare Customs Statement"
                   style={{
-                    display:
-                      (clientGameState.state == "Pack" && clientGameState.localOfficer == false && clientGameState.localState == "packing")
-                        ? "inline-block" : "none",
+                    display: "inline-block",
                     verticalAlign: "top"
                   }}
                 >
@@ -4691,28 +4702,28 @@ export default function MenuGame(props: MenuGameProps) {
           <Section
             key="menu_game_local_ready_pool"
             title={(
-              (clientGameState.state == "Swap" && clientGameState.localActiveTrader)
-              || (clientGameState.state == "Pack" && clientGameState.localOfficer == false && clientGameState.localState == "packing"))
+              (clientGameState.state == "SwapPack" && clientGameState.localActiveSwapTrader === true)
+              || (clientGameState.state === "SwapPack" && clientGameState.localOfficer == false && clientGameState.localState == "packing"))
               ? undefined : "Supply Contracts"}
             style={{ display: "inline-block", verticalAlign: "top", flexGrow: "1" }}
           >
             <LocalReadyPool
-              key={`menu_game_local_ready_pool_ready_pool_${clientGameState.state}`}
+              key={`menu_game_local_ready_pool_ready_pool_${clientGameState.state}_${clientGameState.state === "SwapPack" && clientGameState.localActiveSwapTrader}`}
               usekey="menu_game_local_ready_pool_ready_pool"
               contracts={currentTraderSupplies.get(iPlayerLocal).readyPool}
               mode={
                 (
-                  (clientGameState.state == "Swap" && clientGameState.localActiveTrader)
-                  || (clientGameState.state == "Pack" && clientGameState.localOfficer == false && clientGameState.localState == "packing")
+                  (clientGameState.state == "SwapPack" && clientGameState.localActiveSwapTrader === true)
+                  || (clientGameState.state == "SwapPack" && clientGameState.localOfficer == false && clientGameState.localState == "packing")
                 )
                   ? {
                     mode: "select for exit",
-                    selectInstruction: `Click Contracts to ${clientGameState.state == "Swap" ? "Recycle" : "Pack into Crate"}`,
-                    exitTitle: clientGameState.state == "Swap" ? "Recycle" : "Pack",
-                    entry: clientGameState.state == "Swap" ? opt({ type: "general pool", title: "Acquiring" }) : nullopt,
-                    isSubmittable: () => true, // clientGameState.state == "Swap" || (selected.some(s => s) && clientGameState.claimedProductType.hasValue),
+                    selectInstruction: `Click Contracts to ${clientGameState.localActiveSwapTrader === true ? "Recycle" : "Pack into Crate"}`,
+                    exitTitle: clientGameState.localActiveSwapTrader === true ? "Recycle" : "Pack",
+                    entry: clientGameState.localActiveSwapTrader === true ? opt({ type: "general pool", title: "Acquiring" }) : nullopt,
+                    isSubmittable: () => true, // clientGameState.localActiveSwapTrader === true || (selected.some(s => s) && clientGameState.claimedProductType.hasValue),
                     onSubmit: ({ selected }) => {
-                      if (clientGameState.state == "Swap") {
+                      if (clientGameState.localActiveSwapTrader === true) {
                         clientSendClientEventToServer({
                           type: NetworkTypes.ClientEventType.SWAP_SUPPLY_CONTRACTS,
                           data: {
@@ -4740,7 +4751,7 @@ export default function MenuGame(props: MenuGameProps) {
                       }
                     },
                     onChange: ({ selected }) => {
-                      if (clientGameState.state == "Pack") {
+                      if (clientGameState.localActiveSwapTrader === false) {
                         setClientGameState({
                           ...clientGameState,
                           selectedReadyPoolProductsForPacking: selected,
@@ -4790,11 +4801,13 @@ export default function MenuGame(props: MenuGameProps) {
                       animation={animation}
                       contents={(() => {
                         switch (clientGameState.state) {
-                          case "Swap":
                           case "Refresh":
                             return { labeled: false, state: "no crate" }
-                          case "Pack":
-                            if (clientGameState.localOfficer == true) {
+                          case "SwapPack":
+                            if (clientGameState.localOfficer == true
+                              || clientGameState.localActiveSwapTrader === true
+                              || clientGameState.localState === "waiting"
+                            ) {
                               return { labeled: false, state: "no crate" };
                             } else if (clientGameState.localState == "done") {
                               return {
@@ -4843,7 +4856,7 @@ export default function MenuGame(props: MenuGameProps) {
               (
                 clientGameState.localOfficer == false
                 && (
-                  clientGameState.state == "Pack"
+                  (clientGameState.state == "SwapPack" && clientGameState.localActiveSwapTrader === false && clientGameState.localState !== "waiting")
                   || (
                     (clientGameState.state == "CustomsIntro" || clientGameState.state == "Customs")
                     && clientGameState.cartStates.get(iPlayerLocal).packed == true
