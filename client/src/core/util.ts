@@ -28,6 +28,10 @@ export function optValueOr<T>(o: Optional<T>, defaultValue: T): T {
   if (o.hasValue === true) return o.value;
   else return defaultValue;
 }
+export function optAnd<T, U>(o1: Optional<T>, o2: Optional<U>): Optional<[T, U]> {
+  if (o1.hasValue === true && o2.hasValue === true) return opt([o1.value, o2.value]);
+  else return nullopt;
+}
 
 export function omitAttrs(omit: string[], attrs: any): { [otherOptions: string]: unknown } {
   const result: any = {};

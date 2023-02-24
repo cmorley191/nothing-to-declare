@@ -294,9 +294,10 @@ export type SerializableGameSettings = {
 }
 
 
+export type RecycleCommunityContractPool = ProductType[];
 export type CommunityContractPools = {
   generalPoolContractCounts: ProductArray<number>,
-  recyclePoolsContracts: ProductType[][],
+  recyclePoolsContracts: RecycleCommunityContractPool[],
 }
 
 export type TraderSupplies = {

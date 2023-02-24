@@ -3,13 +3,14 @@ import * as React from "react";
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
 import * as NetworkTypes from "../../core/network_types";
 import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings, officerIcon, contractIcon } from "../../core/game_types";
-import { Optional, getRandomInt, nullopt, omitAttrs, opt, optMap, optValueOr } from "../../core/util";
+import { Optional, getRandomInt, nullopt, omitAttrs, opt, optAnd, optBind, optMap, optValueOr } from "../../core/util";
 
 import AnimatedEllipses from "../elements/animated_ellipses";
 import Keyframes from "../elements/keyframes";
 
 import parchmentLegalImgSrc from '../../../images/parchment.png';
 import parchmentIllegalImgSrc from '../../../images/parchment_red.png';
+import contractBoardImgSrc from '../../../images/supply_contract_board.png';
 import cartEmptyImgSrc from '../../../images/cart_empty.png';
 import cartClosedLabeledImgSrc from '../../../images/cart_closed_labeled.png';
 import cartClosedUnlabeledImgSrc from '../../../images/cart_closed_unlabeled.png';
@@ -815,15 +816,31 @@ function SupplyContract(props: {
         <div style={{
           whiteSpace: "nowrap",
           margin: `${contractMarginPx}px`,
+          position: "relative",
         }}>
           <div style={{
             display: "inline-block",
             fontSize: "200%",
             width: "100%",
             textAlign: "center",
+            opacity: props.productType.hasValue === true ? 1 : 0
           }}>
             {props.productType.hasValue === true ? getProductInfo(props.productType.value).icon : unknownProductIcon}
           </div>
+          <div
+            hidden={props.productType.hasValue === true}
+            style={{
+              fontSize: "300%",
+              width: "100%",
+              textAlign: "center",
+              position: "absolute",
+              left: 0,
+              top: "50%",
+              transform: "translate(0, -50%)",
+            }}>
+            {unknownProductIcon}
+          </div>
+
           <div style={{
             width: "100%",
             textAlign: "center",
@@ -885,16 +902,17 @@ function SupplyContract(props: {
   );
 }
 
+type LocalReadyPoolSupplyContractData = {
+  productType: Optional<ProductType>,
+  style: ("visible" | "faded" | "hidden"),
+  clickable: boolean,
+};
 /**
  * (Element) One of the tables of supply contracts in the local ready pool display.
  */
 function LocalReadyPoolSupplyContracts(props: {
   usekey: string,
-  contracts: {
-    productType: Optional<ProductType>,
-    style: ("visible" | "faded" | "hidden"),
-    clickable: boolean,
-  }[],
+  contracts: LocalReadyPoolSupplyContractData[],
   onClick?: (event: { event: MouseEvent, iContract: number }) => void;
   [otherOptions: string]: unknown
 }) {
@@ -950,23 +968,52 @@ function LocalReadyPoolSupplyContracts(props: {
 type LocalReadyPoolStaticModeProps = {
   mode: "static"
 }
+type LocalReadyPoolSelectedForExitModeStrategicSelectedForEntryData = {
+  recyclePoolSelectedCounts: number[],
+  generalPoolSelectedCount: number,
+};
+type LocalReadyPoolSelectForExitModeStrategicEntryProps = {
+  entryType: "strategic",
+  enterableTitle: string,
+  enteringTitle: string,
+  communityPools: CommunityContractPools,
+  initialSelectedForEntry?: LocalReadyPoolSelectedForExitModeStrategicSelectedForEntryData,
+};
+type LocalReadyPoolSelectedForExitModeSimpleEntryProps = {
+  entryType: "simple",
+  enteringTitle: string,
+};
+type LocalReadyPoolSelectForExitModeEntryProps =
+  | LocalReadyPoolSelectForExitModeStrategicEntryProps
+  | LocalReadyPoolSelectedForExitModeSimpleEntryProps;
 type LocalReadyPoolSelectForExitModeProps = {
   mode: "select for exit",
   selectInstruction: string,
   exitTitle: string,
-  entry: Optional<{ type: "general pool", title: string }>
-  initialSelected?: boolean[],
-  isSubmittable?: (state: { selected: boolean[] }) => boolean,
-  onSubmit: (event: { selected: boolean[] }) => void,
-  onChange?: (state: { selected: boolean[] }) => void,
+  entryProps: Optional<LocalReadyPoolSelectForExitModeEntryProps>,
+  initialSelectedForExit?: boolean[],
+  isSubmittable?: (state: { selectedForExit: boolean[], selectedForEntry: Optional<LocalReadyPoolSelectedForExitModeStrategicSelectedForEntryData> }) => boolean,
+  onSubmit: (event: { selectedForExit: boolean[], selectedForEntry: Optional<LocalReadyPoolSelectedForExitModeStrategicSelectedForEntryData> }) => void,
+  onChange?: (state: { selectedForExit: boolean[], selectedForEntry: Optional<LocalReadyPoolSelectedForExitModeStrategicSelectedForEntryData> }) => void,
 }
 type LocalReadyPoolModeProps =
   | LocalReadyPoolStaticModeProps
   | LocalReadyPoolSelectForExitModeProps
+type LocalReadyPoolModeStateEntryState =
+  | {
+    entryType: "strategic",
+    props: LocalReadyPoolSelectForExitModeStrategicEntryProps,
+    selectedForEntry: LocalReadyPoolSelectedForExitModeStrategicSelectedForEntryData,
+  }
+  | {
+    entryType: "simple",
+    props: LocalReadyPoolSelectedForExitModeSimpleEntryProps,
+  };
 type LocalReadyPoolModeState =
   | LocalReadyPoolStaticModeProps
   | LocalReadyPoolSelectForExitModeProps & {
-    selected: boolean[]
+    selectedForExit: boolean[],
+    entry: Optional<LocalReadyPoolModeStateEntryState>,
   }
 
 /**
@@ -991,36 +1038,97 @@ function LocalReadyPool(props: {
    * setModeState to rerender (and use a ref flag to avoid an infinite loop of this).
    */
   /// initialization and synchronization function:
-  const modePropsAsModeState = (modeStateToSynchronize?: LocalReadyPoolModeState) => {
+  const modePropsAsModeState = (modeStateToSynchronize?: LocalReadyPoolModeState): LocalReadyPoolModeState => {
     if (props.mode.mode == "static") {
       return props.mode;
 
     } else { // select for exit
 
-      if ( // if props.initialSelected matches the existing state's initial selected, keep the state's selected
+      if ( // if props.initialSelected (both entry and exit) matches the existing state's initial selected, keep the state's selected
         modeStateToSynchronize !== undefined
         && modeStateToSynchronize.mode === "select for exit"
-        && ((props.mode.initialSelected === undefined) === (modeStateToSynchronize.initialSelected === undefined))
+        && ((props.mode.initialSelectedForExit === undefined) === (modeStateToSynchronize.initialSelectedForExit === undefined))
         && (
-          (props.mode.initialSelected === undefined || modeStateToSynchronize.initialSelected === undefined)
+          (props.mode.initialSelectedForExit === undefined || modeStateToSynchronize.initialSelectedForExit === undefined)
           || ((() => {
-            const zipped = props.mode.initialSelected.zip(modeStateToSynchronize.initialSelected);
+            const zipped = props.mode.initialSelectedForExit.zip(modeStateToSynchronize.initialSelectedForExit);
             return zipped !== undefined && zipped.every(([propHasInitiallySelected, stateHasInitiallySelected]) => propHasInitiallySelected === stateHasInitiallySelected)
           })())
+        )
+        && (props.mode.entryProps.hasValue === modeStateToSynchronize.entry.hasValue)
+        && (
+          (props.mode.entryProps.hasValue === false || modeStateToSynchronize.entry.hasValue === false)
+          || (
+            (props.mode.entryProps.value.entryType === "simple" && modeStateToSynchronize.entry.value.entryType === "simple")
+            || (
+              (props.mode.entryProps.value.entryType === "strategic" && modeStateToSynchronize.entry.value.entryType === "strategic")
+              && ((props.mode.entryProps.value.initialSelectedForEntry === undefined) === (modeStateToSynchronize.entry.value.props.initialSelectedForEntry === undefined))
+              && (
+                (props.mode.entryProps.value.initialSelectedForEntry === undefined || modeStateToSynchronize.entry.value.props.initialSelectedForEntry === undefined)
+                || (() => {
+                  const recycleZipped = props.mode.entryProps.value.initialSelectedForEntry.recyclePoolSelectedCounts
+                    .zip(modeStateToSynchronize.entry.value.props.initialSelectedForEntry.recyclePoolSelectedCounts);
+                  return (
+                    (props.mode.entryProps.value.initialSelectedForEntry?.generalPoolSelectedCount === modeStateToSynchronize.entry.value.props.initialSelectedForEntry?.generalPoolSelectedCount)
+                    && recycleZipped !== undefined
+                    && recycleZipped.every(([propInitiallySelected, stateInitiallySelected]) => propInitiallySelected === stateInitiallySelected)
+                  );
+                })()
+              )
+            )
+          )
         )
       ) {
         return {
           ...props.mode,
-          selected: modeStateToSynchronize.selected
+          selectedForExit: modeStateToSynchronize.selectedForExit,
+          entry: optBind(
+            optAnd(modeStateToSynchronize.entry, props.mode.entryProps),  // these are populated/not-populated together, based on if-statement above
+            ([stateEntry, propsEntryProps]): Optional<LocalReadyPoolModeStateEntryState> => {
+              if (stateEntry.entryType === "simple" && propsEntryProps.entryType === "simple") {
+                return opt({
+                  ...stateEntry,
+                  props: propsEntryProps,
+                });
+              } else if (stateEntry.entryType === "strategic" && propsEntryProps.entryType === "strategic") {
+                return opt({
+                  ...stateEntry,
+                  props: propsEntryProps,
+                });
+              } else return nullopt; // should never happen, based on if-statement above
+            }
+          )
         };
 
-      } else { // else props.initialSelected changed, so use that for selected
+      } else { // else a props.initialSelected changed, so use that for selected
         return {
           ...props.mode,
-          selected:
-            (props.mode.initialSelected === undefined)
+          selectedForExit:
+            (props.mode.initialSelectedForExit === undefined)
               ? Array(props.contracts.length).fill(false)
-              : props.mode.initialSelected.shallowCopy()
+              : props.mode.initialSelectedForExit.shallowCopy(),
+          entry: optMap(
+            props.mode.entryProps,
+            propsEntryProps => (
+              (propsEntryProps.entryType === "simple")
+                ? { entryType: "simple", props: propsEntryProps }
+                : {
+                  entryType: "strategic",
+                  props: propsEntryProps,
+                  selectedForEntry: (
+                    (propsEntryProps.initialSelectedForEntry === undefined)
+                      ? {
+                        recyclePoolSelectedCounts: Array(propsEntryProps.communityPools.recyclePoolsContracts.length).fill(0),
+                        generalPoolSelectedCount: 0,
+                      }
+                      : {
+                        recyclePoolSelectedCounts: propsEntryProps.initialSelectedForEntry.recyclePoolSelectedCounts.shallowCopy(),
+                        generalPoolSelectedCount: propsEntryProps.initialSelectedForEntry.generalPoolSelectedCount,
+                      }
+                  ),
+                }
+            )
+          )
         };
       }
     }
@@ -1041,6 +1149,42 @@ function LocalReadyPool(props: {
       <Section
         title={mode.mode === "select for exit" ? mode.selectInstruction : undefined}
       >
+        { // <Section _enterable>
+          (mode.mode == "select for exit" && mode.entry.hasValue === true && mode.entry.value.entryType === "strategic")
+            ? (
+              <Section key={`${props.usekey}_enterable_pool`}
+                title={mode.entry.value.props.enterableTitle}
+                style={{ display: "inline-block", verticalAlign: "top" }}
+              >
+                <img
+                  src={contractBoardImgSrc}
+                  style={{ width: "500px" }}
+                  onClick={() => {
+                    if (mode.mode == "select for exit" && mode.entry.hasValue === true && mode.entry.value.entryType === "strategic") {
+                      if (mode.entry.value.selectedForEntry.generalPoolSelectedCount < readyPoolSize) {
+                        const newSelectedForEntry = {
+                          ...mode.entry.value.selectedForEntry,
+                          generalPoolSelectedCount: mode.entry.value.selectedForEntry.generalPoolSelectedCount + 1,
+                        };
+                        setModeState({
+                          ...mode,
+                          entry: opt({
+                            ...mode.entry.value,
+                            selectedForEntry: newSelectedForEntry
+                          })
+                        });
+                        if (mode.onChange !== undefined) mode.onChange({
+                          selectedForExit: mode.selectedForExit,
+                          selectedForEntry: opt(newSelectedForEntry)
+                        });
+                      }
+                    }
+                  }}
+                />
+              </Section>
+            )
+            : undefined
+        }
         <Section key={`${props.usekey}_ready_pool`}
           title={mode.mode == "select for exit" ? "Keep" : undefined}
           style={{ display: "inline-block", verticalAlign: "top" }}
@@ -1053,7 +1197,7 @@ function LocalReadyPool(props: {
                   .map((p) => ({ productType: opt(p), style: "visible", clickable: false }))
                 : // mode == "select for exit"
                 (props.contracts
-                  .zip(mode.selected) ?? []) // TODO fix by moving props.contracts into the state, zipped with selected
+                  .zip(mode.selectedForExit) ?? []) // TODO fix by moving props.contracts into the state, zipped with selected
                   .map(([p, s]) => {
                     return {
                       productType: opt(p),
@@ -1064,19 +1208,142 @@ function LocalReadyPool(props: {
             }
             onClick={(e) => {
               if (mode.mode == "select for exit") {
-                const iContractCurrentSelected = mode.selected[e.iContract];
+                const iContractCurrentSelected = mode.selectedForExit[e.iContract];
                 if (iContractCurrentSelected === undefined) {
                   console.log(`Bad iContract from ready pool LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
                   console.trace();
                 } else {
-                  const newSelected = mode.selected.shallowCopy();
+                  const newSelected = mode.selectedForExit.shallowCopy();
                   newSelected[e.iContract] = !iContractCurrentSelected;
-                  setModeState({ ...mode, selected: newSelected });
-                  if (mode.onChange !== undefined) mode.onChange({ selected: newSelected });
+                  setModeState({ ...mode, selectedForExit: newSelected });
+                  if (mode.onChange !== undefined) mode.onChange({
+                    selectedForExit: newSelected,
+                    selectedForEntry: optBind(mode.entry, entryVal => entryVal.entryType === "strategic" ? opt(entryVal.selectedForEntry) : nullopt)
+                  });
                 }
               }
             }}
           />
+          { // <Section _entering
+            (mode.mode == "select for exit" && mode.entry.hasValue === true)
+              ? (
+                (() => {
+                  const recycleDataZipped =
+                    (mode.entry.value.entryType === "strategic")
+                      ? mode.entry.value.selectedForEntry.recyclePoolSelectedCounts
+                        .zip(mode.entry.value.props.communityPools.recyclePoolsContracts)
+                      : [];
+                  if (recycleDataZipped === undefined) return undefined;
+
+                  const generalPoolSection = (
+                    <Section key={`${props.usekey}_ready_entering_general_pool`}
+                      title={(mode.entry.value.entryType === "simple")
+                        ? `${mode.entry.value.props.enteringTitle}`
+                        : `${mode.entry.value.props.enteringTitle} (Random)`
+                      }
+                    >
+                      <LocalReadyPoolSupplyContracts
+                        usekey={`${props.usekey}_ready_pool_contracts_entering_general_pool`}
+                        contracts={
+                          Array((mode.entry.value.entryType === "simple")
+                            ? mode.selectedForExit.filter(s => s).length
+                            : mode.entry.value.selectedForEntry.generalPoolSelectedCount
+                          )
+                            .fill(false)
+                            .map((): LocalReadyPoolSupplyContractData => ({
+                              productType: nullopt,
+                              style: "visible",
+                              clickable: (mode.entry.hasValue === true && mode.entry.value.entryType === "strategic"), // TODO FIX hasValue should always be true
+                            }))
+                        }
+                        onClick={(e) => {
+                          if (mode.mode == "select for exit" && mode.entry.hasValue === true && mode.entry.value.entryType === "strategic") {
+                            if (e.iContract >= mode.entry.value.selectedForEntry.generalPoolSelectedCount) {
+                              console.log(`Bad iContract from general entering pool LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
+                              console.trace();
+                            } else {
+                              const newSelectedForEntry = {
+                                ...mode.entry.value.selectedForEntry,
+                                generalPoolSelectedCount: mode.entry.value.selectedForEntry.generalPoolSelectedCount - 1,
+                              };
+                              setModeState({
+                                ...mode,
+                                entry: opt({
+                                  ...mode.entry.value,
+                                  selectedForEntry: newSelectedForEntry,
+                                })
+                              });
+                              if (mode.onChange !== undefined) mode.onChange({
+                                selectedForExit: mode.selectedForExit,
+                                selectedForEntry: opt(newSelectedForEntry)
+                              });
+                            }
+                          }
+                        }}
+                      />
+                    </Section>
+                  );
+
+                  if (mode.entry.value.entryType === "simple") {
+                    return mode.selectedForExit.filter(s => s).length == 0 ? [] : [generalPoolSection];
+
+                  } else { // "strategic"
+                    const entry = mode.entry.value;
+                    return (
+                      recycleDataZipped
+                        .map(([selectedCount, pool], iPool) => ({ selectedCount, pool, iPool }))
+                        .filter(({ selectedCount }) => selectedCount > 0)
+                        .map(({ selectedCount, pool, iPool }) => {
+                          return (
+                            <Section key={`${props.usekey}_ready_entering_recycle_pool_${iPool}`}
+                              title={`${entry.props.enterableTitle} (Urgent ${iPool + 1})`}
+                            >
+                              <LocalReadyPoolSupplyContracts
+                                usekey={`${props.usekey}_ready_pool_contracts_entering_recycle_pool_${iPool}`}
+                                contracts={
+                                  pool.take(selectedCount)
+                                    .map((p): LocalReadyPoolSupplyContractData => ({
+                                      productType: opt(p),
+                                      style: "visible",
+                                      clickable: true,
+                                    }))
+                                }
+                                onClick={(e) => {
+                                  if (e.iContract >= selectedCount) {
+                                    console.log(`Bad iContract from recycle entering pool LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
+                                    console.trace();
+                                  } else {
+                                    const newSelectedForEntry = {
+                                      ...entry.selectedForEntry,
+                                      recyclePoolSelectedCounts: (() => {
+                                        const newCounts = entry.selectedForEntry.recyclePoolSelectedCounts.shallowCopy();
+                                        newCounts[iPool] = selectedCount - (selectedCount - e.iContract);
+                                        return newCounts;
+                                      })(),
+                                    };
+                                    setModeState({
+                                      ...mode,
+                                      entry: opt({
+                                        ...entry,
+                                        selectedForEntry: newSelectedForEntry
+                                      })
+                                    });
+                                    if (mode.onChange !== undefined) mode.onChange({
+                                      selectedForExit: mode.selectedForExit,
+                                      selectedForEntry: opt(newSelectedForEntry)
+                                    });
+                                  }
+                                }}
+                              />
+                            </Section>
+                          );
+                        })
+                    ).concat(entry.selectedForEntry.generalPoolSelectedCount == 0 ? [] : [generalPoolSection]);
+                  }
+                })()
+              )
+              : undefined
+          }
         </Section>
         { // <Section _exit>
           (mode.mode == "select for exit")
@@ -1089,7 +1356,7 @@ function LocalReadyPool(props: {
                   usekey={`${props.usekey}_exit_contracts`}
                   contracts={
                     (props.contracts
-                      .zip(mode.selected) ?? []) // TODO fix, see above
+                      .zip(mode.selectedForExit) ?? []) // TODO fix, see above
                       .map(([p, s]) => {
                         return {
                           productType: opt(p),
@@ -1099,15 +1366,18 @@ function LocalReadyPool(props: {
                       })
                   }
                   onClick={(e) => {
-                    const iContractCurrentSelected = mode.selected[e.iContract];
+                    const iContractCurrentSelected = mode.selectedForExit[e.iContract];
                     if (iContractCurrentSelected === undefined) {
                       console.log(`Bad iContract from exit LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
                       console.trace();
                     } else {
-                      const newSelected = mode.selected.shallowCopy();
+                      const newSelected = mode.selectedForExit.shallowCopy();
                       newSelected[e.iContract] = !iContractCurrentSelected;
-                      setModeState({ ...mode, selected: newSelected });
-                      if (mode.onChange !== undefined) mode.onChange({ selected: newSelected });
+                      setModeState({ ...mode, selectedForExit: newSelected });
+                      if (mode.onChange !== undefined) mode.onChange({
+                        selectedForExit: newSelected,
+                        selectedForEntry: optBind(mode.entry, entryVal => entryVal.entryType === "strategic" ? opt(entryVal.selectedForEntry) : nullopt),
+                      });
                     }
                   }}
                 />
@@ -1120,9 +1390,17 @@ function LocalReadyPool(props: {
         (mode.mode == "select for exit")
           ? (
             <button
-              disabled={!(mode.isSubmittable === undefined || mode.isSubmittable({ selected: mode.selected }))}
+              disabled={!(mode.isSubmittable === undefined
+                || mode.isSubmittable({
+                  selectedForExit: mode.selectedForExit,
+                  selectedForEntry: optBind(mode.entry, entryVal => entryVal.entryType === "strategic" ? opt(entryVal.selectedForEntry) : nullopt),
+                }))
+              }
               onClick={(_e) => {
-                mode.onSubmit({ selected: mode.selected });
+                mode.onSubmit({
+                  selectedForExit: mode.selectedForExit,
+                  selectedForEntry: optBind(mode.entry, entryVal => entryVal.entryType === "strategic" ? opt(entryVal.selectedForEntry) : nullopt),
+                });
               }}
             >
               {mode.exitTitle} Selected
@@ -4855,17 +5133,48 @@ export default function MenuGame(props: MenuGameProps) {
                     mode: "select for exit",
                     selectInstruction: `Click Contracts to ${clientGameState.localActiveSwapTrader === true ? "Recycle" : "Pack into Crate"}`,
                     exitTitle: clientGameState.localActiveSwapTrader === true ? "Recycle" : "Pack",
-                    entry: clientGameState.localActiveSwapTrader === true ? opt({ type: "general pool", title: "Acquiring" }) : nullopt,
+                    entryProps: (
+                      (clientGameState.localActiveSwapTrader === false)
+                        ? nullopt
+                        : (clientGameState.state === "SimpleSwapPack")
+                          ? opt({
+                            entryType: "simple",
+                            enteringTitle: "Replacing from Community Pool"
+                          })
+                          : opt({
+                            entryType: "strategic",
+                            enterableTitle: "Community Pools",
+                            enteringTitle: "Take",
+                            communityPools: clientGameState.communityPools,
+                          })
+                    ),
                     isSubmittable: () => true, // clientGameState.localActiveSwapTrader === true || (selected.some(s => s) && clientGameState.claimedProductType.hasValue),
-                    onSubmit: ({ selected }) => {
+                    onSubmit: ({ selectedForExit, selectedForEntry }) => {
                       if (clientGameState.localActiveSwapTrader === true) {
-                        clientSendClientEventToServer({
-                          type: NetworkTypes.ClientEventType.SWAP_SUPPLY_CONTRACTS,
-                          data: {
-                            sourceClientId: props.localInfo.clientId,
-                            recycled: selected
+                        const selectedForExitCount = selectedForExit.filter(s => s).length;
+                        const selectedForEntryCount = (
+                          (clientGameState.state === "SimpleSwapPack")
+                            ? selectedForExitCount
+                            : (selectedForEntry.hasValue === false)
+                              ? 0
+                              : selectedForEntry.value.generalPoolSelectedCount
+                        );
+                        const newReadyPoolCount = readyPoolSize + selectedForEntryCount - selectedForExitCount;
+                        if (newReadyPoolCount != readyPoolSize) {
+                          if (newReadyPoolCount < readyPoolSize) {
+                            alert(`You have too few products (you have ${newReadyPoolCount}; must have ${readyPoolSize}). Take more products from the community pools, or recycle fewer products!`);
+                          } else {
+                            alert(`You have too many products (you have ${newReadyPoolCount}; must have only ${readyPoolSize}). Recycle more products, or take fewer products from the community pools!`);
                           }
-                        });
+                        } else {
+                          clientSendClientEventToServer({
+                            type: NetworkTypes.ClientEventType.SWAP_SUPPLY_CONTRACTS,
+                            data: {
+                              sourceClientId: props.localInfo.clientId,
+                              recycled: selectedForExit
+                            }
+                          });
+                        }
                       } else { // Pack
                         if (clientGameState.claimedProductType.hasValue == false) {
                           alert("You must prepare a statement about the contents of your cart for the customs officer!");
@@ -4877,7 +5186,7 @@ export default function MenuGame(props: MenuGameProps) {
                             type: NetworkTypes.ClientEventType.PACK_CART,
                             data: {
                               sourceClientId: props.localInfo.clientId,
-                              packed: selected,
+                              packed: selectedForExit,
                               claimedType: clientGameState.claimedProductType.value,
                               claimMessage: claimMessage == "" ? nullopt : opt(claimMessage)
                             }
@@ -4885,7 +5194,7 @@ export default function MenuGame(props: MenuGameProps) {
                         }
                       }
                     },
-                    onChange: ({ selected }) => {
+                    onChange: ({ selectedForExit: selected }) => {
                       if (clientGameState.localActiveSwapTrader === false) {
                         setClientGameState({
                           ...clientGameState,
