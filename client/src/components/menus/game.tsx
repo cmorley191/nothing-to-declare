@@ -129,7 +129,7 @@ function useGameAnimationStep(animation: Optional<GameAnimationSequence>) {
   return { iGameAnimationStep, gameAnimationStep };
 }
 
-const initialRecyclePoolContractCount = 10;
+const initialRecyclePoolContractCount = 15;
 
 /**
  * Returns a number of randomly-chosen supply contracts (specifically, returns their ProductType) 
@@ -187,8 +187,10 @@ function generateInitialPersistentGameState(gameSettings: GameSettings, players:
   const contractPools: CommunityContractPools = {
     generalPoolContractCounts: generalPoolContractCounts,
     recyclePoolsContracts:
-      Array(2).fill(false)
-        .map(() => takeContractsFromGeneralPool(gameSettings, { generalPoolContractCounts, recyclePoolsContracts: [[], []] }, initialRecyclePoolContractCount))
+      (gameSettings.swapMode === "strategic")
+        ? Array(2).fill(false)
+          .map(() => takeContractsFromGeneralPool(gameSettings, { generalPoolContractCounts, recyclePoolsContracts: [[], []] }, initialRecyclePoolContractCount))
+        : [[], []] // recycle pools dont matter in simple mode
   };
 
   const traderSupplies =
@@ -825,6 +827,8 @@ function SupplyContract(props: {
         <div style={{
           whiteSpace: "nowrap",
           margin: `${contractMarginPx}px`,
+          width: "88px", // TODO replace these hardcoded values with calculated ones? These are the biggest size I saw -- necessary so the Interactable...Stack jitter divs are all the same size
+          height: "82px",
           position: "relative",
         }}>
           <div style={{
@@ -913,7 +917,8 @@ function SupplyContract(props: {
 
 type InteractableSupplyContractData = {
   productType: Optional<ProductType>,
-  style: ("visible" | "slightly faded" | "faded" | "hidden"),
+  opacity: ("visible" | "slightly faded" | "faded" | "hidden"),
+  highlighted: boolean,
   clickable: boolean,
 };
 
@@ -924,9 +929,10 @@ function SupplyContractsInteractableGrid(props: {
   usekey: string,
   contracts: InteractableSupplyContractData[],
   onClick?: (event: { event: MouseEvent, iContract: number }) => void;
+  onHover?: (event: { event: MouseEvent, iContract: Optional<number> }) => void;
   [otherOptions: string]: unknown
 }) {
-  const attrs = omitAttrs(['usekey', 'contracts', 'onClick'], props);
+  const attrs = omitAttrs(['usekey', 'contracts', 'onClick', 'onHover'], props);
 
   const contractsPerRow = 3;
 
@@ -948,11 +954,16 @@ function SupplyContractsInteractableGrid(props: {
                     <td
                       key={`${props.usekey}_supply_contract_${c.iContract}`}
                       style={{
-                        opacity: (c.style === "visible") ? 1 : (c.style == "faded") ? 0.3 : (c.style == "slightly faded") ? 0.6 : 0,
+                        opacity: (c.opacity === "visible") ? 1 : (c.opacity == "faded") ? 0.3 : (c.opacity == "slightly faded") ? 0.6 : 0,
+                        borderWidth: "2px",
+                        borderStyle: "solid",
+                        borderColor: (c.highlighted) ? "black" : "transparent",
                         display: "inline-block",
                         width: `${Math.floor(100 / (iRow == 0 ? g.length : contractsPerRow)) - 1}%`,
                       }}
                       onClick={(event) => { if (c.clickable && props.onClick !== undefined) props.onClick({ event: event.nativeEvent, iContract: c.iContract }) }}
+                      onMouseOver={(event) => { if (c.clickable && props.onHover !== undefined) props.onHover({ event: event.nativeEvent, iContract: opt(c.iContract) }) }}
+                      onMouseOut={(event) => { if (c.clickable && props.onHover !== undefined) props.onHover({ event: event.nativeEvent, iContract: nullopt }) }}
                     >
                       <SupplyContract productType={c.productType} />
                     </td>
@@ -983,14 +994,23 @@ function SupplyContractsInteractableStack(props: {
   contracts: (
     & InteractableSupplyContractData
     & {
-      positionOffset: { left: string, top: string },
+      positionOffset: { leftPx: number, topPx: number, },
+      positionJitter: { leftPx: number, topPx: number, },
       zIndex: number,
     }
   )[],
   onClick?: (event: { event: MouseEvent, iContract: number }) => void;
+  onHover?: (event: { event: MouseEvent, iContract: Optional<number> }) => void;
   [otherOptions: string]: unknown
 }) {
   const attrs = omitAttrs(['usekey', 'contracts', 'onClick'], props);
+
+  const positionJitterStats = props.contracts.length === 0 ? { leftMin: 0, leftMax: 0, topMin: 0, topMax: 0 } : {
+    leftMin: Math.min(...props.contracts.map(c => c.positionJitter.leftPx)),
+    leftMax: Math.max(...props.contracts.map(c => c.positionJitter.leftPx)),
+    topMin: Math.min(...props.contracts.map(c => c.positionJitter.topPx)),
+    topMax: Math.max(...props.contracts.map(c => c.positionJitter.topPx)),
+  }
 
   return (
     <div {...attrs} key={props.usekey}>
@@ -1000,19 +1020,35 @@ function SupplyContractsInteractableStack(props: {
             <div
               key={`${props.usekey}_supply_contract_${iContract}`}
               style={{
-                opacity: (c.style === "visible") ? 1 : (c.style == "faded") ? 0.3 : (c.style == "slightly faded") ? 0.6 : 0,
+                opacity: (c.opacity === "visible") ? 1 : (c.opacity == "faded") ? 0.3 : (c.opacity == "slightly faded") ? 0.6 : 0,
                 display: "inline-block",
                 position: "absolute",
-                ...c.positionOffset,
+                left: `${c.positionOffset.leftPx + positionJitterStats.leftMin}px`,
+                top: `${c.positionOffset.topPx + positionJitterStats.topMin}px`,
                 zIndex: c.zIndex,
               }}
               onClick={(event) => { if (c.clickable && props.onClick !== undefined) props.onClick({ event: event.nativeEvent, iContract }) }}
+              onMouseOver={(event) => { if (c.clickable && props.onHover !== undefined) props.onHover({ event: event.nativeEvent, iContract: opt(iContract) }) }}
+              onMouseOut={(event) => { if (c.clickable && props.onHover !== undefined) props.onHover({ event: event.nativeEvent, iContract: nullopt }) }}
             >
-              <SupplyContract productType={c.productType} />
+              <div style={{
+                marginLeft: c.positionJitter.leftPx - positionJitterStats.leftMin,
+                marginTop: c.positionJitter.topPx - positionJitterStats.topMin,
+                marginRight: positionJitterStats.leftMax - c.positionJitter.leftPx,
+                marginBottom: positionJitterStats.topMax - c.positionJitter.topPx,
+              }}>
+                <div style={{
+                  borderWidth: "2px",
+                  borderStyle: "solid",
+                  borderColor: (c.highlighted) ? "black" : "transparent",
+                }}>
+                  <SupplyContract productType={c.productType} />
+                </div>
+              </div>
             </div>
           ))
       }
-    </div >
+    </div>
   );
 }
 
@@ -1195,6 +1231,13 @@ function LocalReadyPool(props: {
     setModeState(modePropsAsModeState(mode));
   }
 
+  const [hoveredContract, setHoveredContract] = React.useState<Optional<{
+    section:
+    | { section: "general enterable" | "general entering" | "ready" | "exiting" }
+    | { section: "recycle enterable" | "recycle entering", iPool: number },
+    iContract: number,
+  }>>(nullopt);
+
   const recycleDataZipped =
     (mode.mode == "select for exit" && mode.entry.hasValue === true && mode.entry.value.entryType === "strategic")
       ? mode.entry.value.selectedForEntry.recyclePoolSelectedCounts
@@ -1220,6 +1263,24 @@ function LocalReadyPool(props: {
                 <img
                   src={contractBoardImgSrc}
                   style={{ width: "600px" }}
+                />
+                <div
+                  style={{
+                    position: "absolute",
+                    left: "198px",
+                    top: "72px",
+                    width: "201px",
+                    height: "275px",
+                    borderWidth: "2px",
+                    borderStyle: "solid",
+                    borderColor: (
+                      hoveredContract.hasValue === true
+                      && hoveredContract.value.section.section === "general enterable"
+                      && mode.entry.value.selectedForEntry.generalPoolSelectedCount < readyPoolSize
+                    )
+                      ? "black"
+                      : "transparent",
+                  }}
                   onClick={() => {
                     if (mode.mode == "select for exit" && mode.entry.hasValue === true && mode.entry.value.entryType === "strategic") {
                       if (mode.entry.value.selectedForEntry.generalPoolSelectedCount < readyPoolSize) {
@@ -1234,6 +1295,7 @@ function LocalReadyPool(props: {
                             selectedForEntry: newSelectedForEntry
                           })
                         });
+                        setHoveredContract(nullopt);
                         if (mode.onChange !== undefined) mode.onChange({
                           selectedForExit: mode.selectedForExit,
                           selectedForEntry: opt(newSelectedForEntry)
@@ -1241,18 +1303,30 @@ function LocalReadyPool(props: {
                       }
                     }
                   }}
-                />
+                  onMouseOver={(_event) => {
+                    setHoveredContract(opt({
+                      section: { section: "general enterable" },
+                      iContract:
+                        (mode.entry.hasValue === true && mode.entry.value.entryType === "strategic") // TODO FIX these should always be true
+                          ? mode.entry.value.selectedForEntry.generalPoolSelectedCount
+                          : 0,
+                    }));
+                  }}
+                  onMouseOut={(_event) => { setHoveredContract(nullopt); }}
+                ></div>
                 {
                   (() => {
                     const entry = mode.entry.value;
                     if (recycleDataZipped === undefined) return undefined;
 
                     // get from rng seeded with products in discard pile (or something else fixed?)
-                    const positionOffsetsJitter: [number, number][] = [[1, 1], [-1, -5], [-3, -3], [3, 1], [-4, 2], [-1, 5], [-3, -4], [-2, 3], [4, -4], [-4, -5]];
+                    const positionOffsetsJitter: [number, number][] = [[2, 1], [-1, -5], [-6, -3], [5, 1], [-8, 2], [-1, 5], [-6, -4], [-3, 3], [8, -4], [-7, -5]];
                     const positionOffsets =
                       positionOffsetsJitter.map(([leftJitter, topJitter], iPos) => ({
-                        left: leftJitter * 2,
-                        top: (iPos < readyPoolSize ? iPos * 20 : (readyPoolSize * 20) + ((iPos - readyPoolSize) * 4)) + topJitter,
+                        leftOffset: 0,
+                        topOffset: (iPos < readyPoolSize ? iPos * 20 : (readyPoolSize * 20) + ((iPos - readyPoolSize) * 4)),
+                        leftJitter,
+                        topJitter,
                       }));
 
                     return recycleDataZipped
@@ -1268,21 +1342,47 @@ function LocalReadyPool(props: {
                           contracts={
                             pool
                               .takeZip(positionOffsets)
-                              .map(([p, positionOffset], iContract) => ({
-                                productType: opt(p),
-                                style: iContract < selectedCount ? "slightly faded" : "visible",
-                                clickable: iContract < readyPoolSize,
-                                positionOffset: {
-                                  left: `${positionOffset.left + ((iContract >= selectedCount) ? 0 : (iPool == 0) ? -50 : 50)}px`,
-                                  top: `${positionOffset.top}px`,
-                                },
-                                zIndex:
-                                  (iContract >= readyPoolSize)
-                                    ? positionOffsets.length - 1 - iContract
-                                    : (iContract <= selectedCount)
-                                      ? (iContract + positionOffsets.length - selectedCount - 1 + readyPoolSize)
-                                      : positionOffsets.length - 1 - iContract,
-                              }))
+                              .map(([p, positionOffset], iContract) => {
+                                const highlighted =
+                                  (hoveredContract.hasValue === true
+                                    && (hoveredContract.value.section.section === "recycle enterable" || hoveredContract.value.section.section === "recycle entering")
+                                    && hoveredContract.value.section.iPool === iPool
+                                    && ((iContract < selectedCount) ? iContract >= hoveredContract.value.iContract : iContract <= hoveredContract.value.iContract)
+                                    && ((iContract < selectedCount) === (hoveredContract.value.iContract < selectedCount))
+                                  )
+                                    ? { highlighted: true as true, iHoveredContract: hoveredContract.value.iContract }
+                                    : { highlighted: false as false };
+
+                                return {
+                                  productType: opt(p),
+                                  opacity: iContract < selectedCount ? "slightly faded" : "visible",
+                                  highlighted: highlighted.highlighted,
+                                  clickable: iContract < readyPoolSize,
+                                  positionOffset: {
+                                    leftPx: positionOffset.leftOffset + ((iContract >= selectedCount) ? 0 : (iPool == 0) ? -50 : 50),
+                                    topPx: positionOffset.topOffset,
+                                  },
+                                  positionJitter: {
+                                    leftPx: positionOffset.leftJitter,
+                                    topPx: positionOffset.topJitter,
+                                  },
+                                  zIndex: positionOffsets.length - (
+                                    (iContract >= readyPoolSize)
+                                      ? (iContract + 1)
+                                      : (() => {
+                                        if (iContract < selectedCount) {
+                                          return (highlighted.highlighted === true)
+                                            ? (iContract - selectedCount)
+                                            : (readyPoolSize - 1 - iContract);
+                                        } else {
+                                          return (highlighted.highlighted === true)
+                                            ? (highlighted.iHoveredContract - iContract)
+                                            : (iContract - selectedCount);
+                                        }
+                                      })()
+                                  ),
+                                };
+                              })
                           }
                           onClick={(e) => {
                             const selectedIContract = pool[e.iContract];
@@ -1311,6 +1411,25 @@ function LocalReadyPool(props: {
                               });
                             }
                           }}
+                          onHover={(e) => {
+                            if (e.iContract.hasValue === false) {
+                              setHoveredContract(nullopt);
+                            } else {
+                              const selectedIContract = pool[e.iContract.value];
+                              if (selectedIContract === undefined || e.iContract.value >= readyPoolSize) {
+                                console.log(`Bad iContract from recycle enterable pool LocalReadyPoolSupplyContracts hover event: ${e.iContract.value}`);
+                                console.trace();
+                              } else {
+                                setHoveredContract(opt({
+                                  section: {
+                                    section: "recycle enterable",
+                                    iPool,
+                                  },
+                                  iContract: e.iContract.value,
+                                }));
+                              }
+                            }
+                          }}
                         />
                       ));
                   })()
@@ -1319,7 +1438,106 @@ function LocalReadyPool(props: {
             )
             : undefined
         }
-        <Section key={`${props.usekey}_ready_pool`}
+        { // <Section _entering_recycle
+          (() => {
+            if (mode.mode !== "select for exit"
+              || mode.entry.hasValue === false
+              || recycleDataZipped === undefined
+              || mode.entry.value.entryType !== "strategic"
+            ) return undefined;
+            const entry = mode.entry.value;
+
+            return (
+              <Section key={`${props.usekey}_entering_recycle_pools`}
+                style={{
+                  display: "inline-block",
+                  verticalAlign: "top",
+                  position: "relative",
+                }}
+              >
+                {
+                  recycleDataZipped.map(([selectedCount, pool], iPool) => {
+                    return (
+                      <Section key={`${props.usekey}_ready_entering_recycle_pool_${iPool}`}
+                        title={`${entry.props.enteringTitle} (from Urgent ${iPool + 1})`}
+                      >
+                        <SupplyContractsInteractableGrid
+                          usekey={`${props.usekey}_ready_pool_contracts_entering_recycle_pool_${iPool}`}
+                          contracts={
+                            pool.take(readyPoolSize)
+                              .map((p, iContract): InteractableSupplyContractData => {
+                                const hoveringToSelectInEnterableSection = (
+                                  hoveredContract.hasValue === true
+                                  && (hoveredContract.value.section.section === "recycle enterable" || hoveredContract.value.section.section === "recycle entering")
+                                  && hoveredContract.value.section.iPool === iPool
+                                  && iContract <= hoveredContract.value.iContract
+                                );
+                                return {
+                                  productType: opt(p),
+                                  opacity: iContract < selectedCount ? "visible" : (hoveringToSelectInEnterableSection) ? "faded" : "hidden",
+                                  highlighted:
+                                    (iContract < selectedCount || hoveringToSelectInEnterableSection)
+                                    && hoveredContract.hasValue === true
+                                    && (hoveredContract.value.section.section === "recycle enterable" || hoveredContract.value.section.section === "recycle entering")
+                                    && hoveredContract.value.section.iPool === iPool
+                                    && ((iContract < selectedCount) ? iContract >= hoveredContract.value.iContract : iContract <= hoveredContract.value.iContract)
+                                    && ((iContract < selectedCount) === (hoveredContract.value.iContract < selectedCount)),
+                                  clickable: iContract < selectedCount,
+                                };
+                              })
+                          }
+                          onClick={(e) => {
+                            if (e.iContract >= selectedCount) {
+                              console.log(`Bad iContract from recycle entering pool LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
+                              console.trace();
+                            } else {
+                              const newSelectedForEntry = {
+                                ...entry.selectedForEntry,
+                                recyclePoolSelectedCounts: (() => {
+                                  const newCounts = entry.selectedForEntry.recyclePoolSelectedCounts.shallowCopy();
+                                  newCounts[iPool] = selectedCount - (selectedCount - e.iContract);
+                                  return newCounts;
+                                })(),
+                              };
+                              setModeState({
+                                ...mode,
+                                entry: opt({
+                                  ...entry,
+                                  selectedForEntry: newSelectedForEntry
+                                })
+                              });
+                              setHoveredContract(nullopt); // this contract is about to disappear from this section
+                              if (mode.onChange !== undefined) mode.onChange({
+                                selectedForExit: mode.selectedForExit,
+                                selectedForEntry: opt(newSelectedForEntry)
+                              });
+                            }
+                          }}
+                          onHover={(e) => {
+                            if (e.iContract.hasValue === false) setHoveredContract(nullopt);
+                            else {
+                              if (e.iContract.value >= selectedCount) {
+                                console.log(`Bad iContract from recycle entering pool LocalReadyPoolSupplyContracts click event: ${e.iContract.value}`);
+                                console.trace();
+                              } else {
+                                setHoveredContract(opt({
+                                  section: { section: "recycle entering", iPool },
+                                  iContract: e.iContract.value,
+                                }))
+                              }
+                            }
+                          }}
+                        />
+                      </Section>
+                    );
+
+                  })
+                }
+              </Section>
+            );
+          })()
+        }
+        <Section key={`${props.usekey}_ready_and_entering_general_pools`}
           title={mode.mode == "select for exit" ? "Keep" : undefined}
           style={{ display: "inline-block", verticalAlign: "top" }}
         >
@@ -1328,14 +1546,18 @@ function LocalReadyPool(props: {
             contracts={
               (mode.mode === "static")
                 ? props.contracts
-                  .map((p) => ({ productType: opt(p), style: "visible", clickable: false }))
+                  .map((p) => ({ productType: opt(p), opacity: "visible", highlighted: false, clickable: false }))
                 : // mode == "select for exit"
                 (props.contracts
                   .zip(mode.selectedForExit) ?? []) // TODO fix by moving props.contracts into the state, zipped with selected
-                  .map(([p, s]) => {
+                  .map(([p, s], iContract) => {
                     return {
                       productType: opt(p),
-                      style: (!s) ? "visible" : "faded",
+                      opacity: (!s) ? "visible" : "faded",
+                      highlighted:
+                        hoveredContract.hasValue === true
+                        && (hoveredContract.value.section.section === "ready" || hoveredContract.value.section.section === "exiting")
+                        && hoveredContract.value.iContract === iContract,
                       clickable: true
                     };
                   })
@@ -1357,119 +1579,113 @@ function LocalReadyPool(props: {
                 }
               }
             }}
+            onHover={(e) => {
+              if (e.iContract.hasValue === false) {
+                setHoveredContract(nullopt);
+              } else {
+                if (mode.mode == "select for exit") {
+                  const iContractCurrentSelected = mode.selectedForExit[e.iContract.value];
+                  if (iContractCurrentSelected === undefined) {
+                    console.log(`Bad iContract from ready pool LocalReadyPoolSupplyContracts hover event: ${e.iContract.value}`);
+                    console.trace();
+                  } else {
+                    setHoveredContract(opt({
+                      section: { section: "ready", },
+                      iContract: e.iContract.value,
+                    }));
+                  }
+                }
+              }
+            }}
           />
-          { // <Section _entering
+          { // <Section _entering_general
             (mode.mode == "select for exit" && mode.entry.hasValue === true)
               ? (
-                (() => {
-                  if (recycleDataZipped === undefined) return undefined;
-
-                  const generalPoolSection = (
-                    <Section key={`${props.usekey}_ready_entering_general_pool`}
-                      title={(mode.entry.value.entryType === "simple")
-                        ? `${mode.entry.value.props.enteringTitle}`
-                        : `${mode.entry.value.props.enteringTitle} (Random)`
-                      }
-                    >
-                      <SupplyContractsInteractableGrid
-                        usekey={`${props.usekey}_ready_pool_contracts_entering_general_pool`}
-                        contracts={
-                          Array((mode.entry.value.entryType === "simple")
-                            ? mode.selectedForExit.filter(s => s).length
-                            : mode.entry.value.selectedForEntry.generalPoolSelectedCount
-                          )
-                            .fill(false)
-                            .map((): InteractableSupplyContractData => ({
-                              productType: nullopt,
-                              style: "visible",
-                              clickable: (mode.entry.hasValue === true && mode.entry.value.entryType === "strategic"), // TODO FIX hasValue should always be true
-                            }))
-                        }
-                        onClick={(e) => {
-                          if (mode.mode == "select for exit" && mode.entry.hasValue === true && mode.entry.value.entryType === "strategic") {
-                            if (e.iContract >= mode.entry.value.selectedForEntry.generalPoolSelectedCount) {
-                              console.log(`Bad iContract from general entering pool LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
-                              console.trace();
-                            } else {
-                              const newSelectedForEntry = {
-                                ...mode.entry.value.selectedForEntry,
-                                generalPoolSelectedCount: mode.entry.value.selectedForEntry.generalPoolSelectedCount - 1,
-                              };
-                              setModeState({
-                                ...mode,
-                                entry: opt({
-                                  ...mode.entry.value,
-                                  selectedForEntry: newSelectedForEntry,
-                                })
-                              });
-                              if (mode.onChange !== undefined) mode.onChange({
-                                selectedForExit: mode.selectedForExit,
-                                selectedForEntry: opt(newSelectedForEntry)
-                              });
-                            }
-                          }
-                        }}
-                      />
-                    </Section>
-                  );
-
-                  if (mode.entry.value.entryType === "simple") {
-                    return mode.selectedForExit.filter(s => s).length == 0 ? [] : [generalPoolSection];
-
-                  } else { // "strategic"
-                    const entry = mode.entry.value;
-                    return (
-                      recycleDataZipped
-                        .map(([selectedCount, pool], iPool) => ({ selectedCount, pool, iPool }))
-                        .filter(({ selectedCount }) => selectedCount > 0)
-                        .map(({ selectedCount, pool, iPool }) => {
-                          return (
-                            <Section key={`${props.usekey}_ready_entering_recycle_pool_${iPool}`}
-                              title={`${entry.props.enteringTitle} (from Urgent ${iPool + 1})`}
-                            >
-                              <SupplyContractsInteractableGrid
-                                usekey={`${props.usekey}_ready_pool_contracts_entering_recycle_pool_${iPool}`}
-                                contracts={
-                                  pool.take(selectedCount)
-                                    .map((p): InteractableSupplyContractData => ({
-                                      productType: opt(p),
-                                      style: "visible",
-                                      clickable: true,
-                                    }))
-                                }
-                                onClick={(e) => {
-                                  if (e.iContract >= selectedCount) {
-                                    console.log(`Bad iContract from recycle entering pool LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
-                                    console.trace();
-                                  } else {
-                                    const newSelectedForEntry = {
-                                      ...entry.selectedForEntry,
-                                      recyclePoolSelectedCounts: (() => {
-                                        const newCounts = entry.selectedForEntry.recyclePoolSelectedCounts.shallowCopy();
-                                        newCounts[iPool] = selectedCount - (selectedCount - e.iContract);
-                                        return newCounts;
-                                      })(),
-                                    };
-                                    setModeState({
-                                      ...mode,
-                                      entry: opt({
-                                        ...entry,
-                                        selectedForEntry: newSelectedForEntry
-                                      })
-                                    });
-                                    if (mode.onChange !== undefined) mode.onChange({
-                                      selectedForExit: mode.selectedForExit,
-                                      selectedForEntry: opt(newSelectedForEntry)
-                                    });
-                                  }
-                                }}
-                              />
-                            </Section>
-                          );
-                        })
-                    ).concat(entry.selectedForEntry.generalPoolSelectedCount == 0 ? [] : [generalPoolSection]);
+                <Section key={`${props.usekey}_ready_entering_general_pool`}
+                  title={(mode.entry.value.entryType === "simple")
+                    ? `${mode.entry.value.props.enteringTitle}`
+                    : `${mode.entry.value.props.enteringTitle} (Random)`
                   }
-                })()
+                >
+                  <SupplyContractsInteractableGrid
+                    usekey={`${props.usekey}_ready_pool_contracts_entering_general_pool`}
+                    contracts={
+                      Array(readyPoolSize).fill(false)
+                        .map((_false, iContract): InteractableSupplyContractData => {
+                          if (mode.entry.hasValue === false) return { productType: nullopt, opacity: "hidden", highlighted: false, clickable: false }; // TODO FIX hasValue should always be true
+                          const selectedForEntry =
+                            (mode.entry.value.entryType === "simple")
+                              ? iContract < mode.selectedForExit.filter(s => s).length
+                              : iContract < mode.entry.value.selectedForEntry.generalPoolSelectedCount;
+                          return {
+                            productType: nullopt,
+                            opacity:
+                              selectedForEntry
+                                ? "visible"
+                                : (
+                                  hoveredContract.hasValue === true
+                                  && hoveredContract.value.section.section === "general enterable"
+                                  && hoveredContract.value.iContract === iContract
+                                )
+                                  ? "faded"
+                                  : "hidden",
+                            highlighted:
+                              hoveredContract.hasValue === true
+                              && (
+                                (selectedForEntry && hoveredContract.value.section.section === "general entering")
+                                || hoveredContract.value.section.section === "general enterable"
+                              )
+                              && hoveredContract.value.iContract === iContract,
+                            clickable: (selectedForEntry && mode.entry.value.entryType === "strategic" && iContract < mode.entry.value.selectedForEntry.generalPoolSelectedCount),
+                          };
+                        })
+                    }
+                    onClick={(e) => {
+                      if (mode.mode == "select for exit" && mode.entry.hasValue === true && mode.entry.value.entryType === "strategic") {
+                        if (e.iContract >= mode.entry.value.selectedForEntry.generalPoolSelectedCount) {
+                          console.log(`Bad iContract from general entering pool LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
+                          console.trace();
+                        } else {
+                          const newSelectedForEntry = {
+                            ...mode.entry.value.selectedForEntry,
+                            generalPoolSelectedCount: mode.entry.value.selectedForEntry.generalPoolSelectedCount - 1,
+                          };
+                          setModeState({
+                            ...mode,
+                            entry: opt({
+                              ...mode.entry.value,
+                              selectedForEntry: newSelectedForEntry,
+                            })
+                          });
+                          if (newSelectedForEntry.generalPoolSelectedCount == e.iContract) {
+                            setHoveredContract(nullopt); // this contract is about to disappear from this section
+                          }
+                          if (mode.onChange !== undefined) mode.onChange({
+                            selectedForExit: mode.selectedForExit,
+                            selectedForEntry: opt(newSelectedForEntry)
+                          });
+                        }
+                      }
+                    }}
+                    onHover={(e) => {
+                      if (e.iContract.hasValue === false) setHoveredContract(nullopt);
+                      else {
+                        if (mode.mode == "select for exit") {
+                          const iContractCurrentSelected = mode.selectedForExit[e.iContract.value];
+                          if (iContractCurrentSelected === undefined) {
+                            console.log(`Bad iContract from ready pool LocalReadyPoolSupplyContracts click event: ${e.iContract.value}`);
+                            console.trace();
+                          } else {
+                            setHoveredContract(opt({
+                              section: { section: "general entering" },
+                              iContract: e.iContract.value,
+                            }));
+                          }
+                        }
+                      }
+                    }}
+                  />
+                </Section>
               )
               : undefined
           }
@@ -1486,10 +1702,14 @@ function LocalReadyPool(props: {
                   contracts={
                     (props.contracts
                       .zip(mode.selectedForExit) ?? []) // TODO fix, see above
-                      .map(([p, s]) => {
+                      .map(([p, s], iContract) => {
                         return {
                           productType: opt(p),
-                          style: s ? "visible" : "hidden",
+                          opacity: s ? "visible" : "hidden",
+                          highlighted:
+                            hoveredContract.hasValue === true
+                            && (hoveredContract.value.section.section === "exiting" || hoveredContract.value.section.section === "ready")
+                            && hoveredContract.value.iContract === iContract,
                           clickable: s
                         };
                       })
@@ -1503,10 +1723,26 @@ function LocalReadyPool(props: {
                       const newSelected = mode.selectedForExit.shallowCopy();
                       newSelected[e.iContract] = !iContractCurrentSelected;
                       setModeState({ ...mode, selectedForExit: newSelected });
+                      setHoveredContract(nullopt); // this contract is about to disappear from this section
                       if (mode.onChange !== undefined) mode.onChange({
                         selectedForExit: newSelected,
                         selectedForEntry: optBind(mode.entry, entryVal => entryVal.entryType === "strategic" ? opt(entryVal.selectedForEntry) : nullopt),
                       });
+                    }
+                  }}
+                  onHover={(e) => {
+                    if (e.iContract.hasValue === false) setHoveredContract(nullopt);
+                    else {
+                      const iContractCurrentSelected = mode.selectedForExit[e.iContract.value];
+                      if (iContractCurrentSelected === undefined) {
+                        console.log(`Bad iContract from exit LocalReadyPoolSupplyContracts click event: ${e.iContract.value}`);
+                        console.trace();
+                      } else {
+                        setHoveredContract(opt({
+                          section: { section: "exiting" },
+                          iContract: e.iContract.value,
+                        }));
+                      }
                     }
                   }}
                 />
@@ -2983,7 +3219,9 @@ export default function MenuGame(props: MenuGameProps) {
                 newReadyPool.push(...recyclePool.splice(0, taking))
               })
             newReadyPool.push(...takeContractsFromGeneralPool(props.settings, newPools, event.data.took.generalPool));
-            (newPools.recyclePoolsContracts[getRandomInt(newPools.recyclePoolsContracts.length)] ?? []).unshift(...readyPoolRecycled);
+            if (serverGameState.state === "StrategicSwapPack") {
+              (newPools.recyclePoolsContracts[getRandomInt(newPools.recyclePoolsContracts.length)] ?? []).unshift(...readyPoolRecycled);
+            } // else if "simple" mode, we don't need to worry about what contracts are in the recycle pool, so just dont bother tracking
             const newTraderSupplies = serverGameState.traderSupplies.shallowCopy();
             newTraderSupplies.set(iPlayerEvent, {
               ...serverGameState.traderSupplies.get(iPlayerEvent),
@@ -5323,7 +5561,7 @@ export default function MenuGame(props: MenuGameProps) {
                                   }
                                   : {
                                     recycledPools: clientGameState.communityPools.recyclePoolsContracts.map(() => 0),
-                                    generalPool: 0,
+                                    generalPool: (clientGameState.state === "SimpleSwapPack") ? selectedForExitCount : 0,
                                   }
                             }
                           });
