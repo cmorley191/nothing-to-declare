@@ -9,7 +9,9 @@ import AnimatedEllipses from "../elements/animated_ellipses";
 import Keyframes from "../elements/keyframes";
 
 import parchmentLegalImgSrc from '../../../images/parchment.png';
+import parchmentLegalHighlightedImgSrc from '../../../images/parchment_highlighted.png';
 import parchmentIllegalImgSrc from '../../../images/parchment_red.png';
+import parchmentIllegalHighlightedImgSrc from '../../../images/parchment_red_highlighted.png';
 import contractBoardImgSrc from '../../../images/supply_contract_board.png';
 import cartEmptyImgSrc from '../../../images/cart_empty.png';
 import cartClosedLabeledImgSrc from '../../../images/cart_closed_labeled.png';
@@ -812,6 +814,7 @@ function TraderSuppliesTable(props: {
  */
 function SupplyContract(props: {
   productType: Optional<ProductType>,
+  highlighted: boolean,
   [otherOptions: string]: unknown
 }) {
   const attrs = omitAttrs(['productType'], props);
@@ -902,7 +905,9 @@ function SupplyContract(props: {
         </div>
       </div>
       <img
-        src={props.productType.hasValue === false || getProductInfo(props.productType.value).category === "legal" ? parchmentLegalImgSrc : parchmentIllegalImgSrc}
+        src={(props.productType.hasValue === false || getProductInfo(props.productType.value).category === "legal")
+          ? ((props.highlighted) ? parchmentLegalHighlightedImgSrc : parchmentLegalImgSrc)
+          : ((props.highlighted) ? parchmentIllegalHighlightedImgSrc : parchmentIllegalImgSrc)}
         style={{
           position: "absolute",
           left: 0,
@@ -955,9 +960,6 @@ function SupplyContractsInteractableGrid(props: {
                       key={`${props.usekey}_supply_contract_${c.iContract}`}
                       style={{
                         opacity: (c.opacity === "visible") ? 1 : (c.opacity == "faded") ? 0.3 : (c.opacity == "slightly faded") ? 0.6 : 0,
-                        borderWidth: "2px",
-                        borderStyle: "solid",
-                        borderColor: (c.highlighted) ? "black" : "transparent",
                         display: "inline-block",
                         width: `${Math.floor(100 / (iRow == 0 ? g.length : contractsPerRow)) - 1}%`,
                       }}
@@ -965,7 +967,7 @@ function SupplyContractsInteractableGrid(props: {
                       onMouseOver={(event) => { if (c.clickable && props.onHover !== undefined) props.onHover({ event: event.nativeEvent, iContract: opt(c.iContract) }) }}
                       onMouseOut={(event) => { if (c.clickable && props.onHover !== undefined) props.onHover({ event: event.nativeEvent, iContract: nullopt }) }}
                     >
-                      <SupplyContract productType={c.productType} />
+                      <SupplyContract productType={c.productType} highlighted={c.highlighted} />
                     </td>
                   ))
                     .concat(Array((iRow == 0) ? 0 : contractsPerRow - g.length).fill(false).map((_blank, iBlank) => (
@@ -1037,13 +1039,7 @@ function SupplyContractsInteractableStack(props: {
                 marginRight: positionJitterStats.leftMax - c.positionJitter.leftPx,
                 marginBottom: positionJitterStats.topMax - c.positionJitter.topPx,
               }}>
-                <div style={{
-                  borderWidth: "2px",
-                  borderStyle: "solid",
-                  borderColor: (c.highlighted) ? "black" : "transparent",
-                }}>
-                  <SupplyContract productType={c.productType} />
-                </div>
+                <SupplyContract productType={c.productType} highlighted={c.highlighted} />
               </div>
             </div>
           ))
@@ -1076,7 +1072,9 @@ type LocalReadyPoolSelectForExitModeEntryProps =
 type LocalReadyPoolSelectForExitModeProps = {
   mode: "select for exit",
   selectInstruction: string,
+  readyTitle: string,
   exitTitle: string,
+  submitText: string,
   entryProps: Optional<LocalReadyPoolSelectForExitModeEntryProps>,
   initialSelectedForExit?: boolean[],
   isSubmittable?: (state: { selectedForExit: boolean[], selectedForEntry: Optional<LocalReadyPoolSelectedForExitModeStrategicSelectedForEntryData> }) => boolean,
@@ -1538,7 +1536,7 @@ function LocalReadyPool(props: {
           })()
         }
         <Section key={`${props.usekey}_ready_and_entering_general_pools`}
-          title={mode.mode == "select for exit" ? "Keep" : undefined}
+          title={mode.mode == "select for exit" ? mode.readyTitle : undefined}
           style={{ display: "inline-block", verticalAlign: "top" }}
         >
           <SupplyContractsInteractableGrid
@@ -1768,7 +1766,7 @@ function LocalReadyPool(props: {
                 });
               }}
             >
-              {mode.exitTitle} Selected
+              {mode.submitText}
             </button>
           )
           : undefined
@@ -5512,20 +5510,30 @@ export default function MenuGame(props: MenuGameProps) {
                 )
                   ? {
                     mode: "select for exit",
-                    selectInstruction: `Click Contracts to ${clientGameState.localActiveSwapTrader === true ? "Recycle" : "Pack into Crate"}`,
-                    exitTitle: clientGameState.localActiveSwapTrader === true ? "Recycle" : "Pack",
+                    selectInstruction: `Select Contracts to ${clientGameState.localActiveSwapTrader === true
+                      ? (clientGameState.state === "SimpleSwapPack" ? "Swap Out" : "Swap In/Out")
+                      : "Fulfill and Pack into Crate"}`,
+                    readyTitle: "Keeping",
+                    exitTitle:
+                      clientGameState.localActiveSwapTrader === true
+                        ? (clientGameState.state === "SimpleSwapPack" ? "Throwing Out" : "Recycling")
+                        : "Packing into Cart",
+                    submitText:
+                      clientGameState.localActiveSwapTrader === true
+                        ? (clientGameState.state === "SimpleSwapPack" ? "Replace Selected Contracts" : "Swap In/Out Selected Contracts")
+                        : "Close-up Cart",
                     entryProps: (
                       (clientGameState.localActiveSwapTrader === false)
                         ? nullopt
                         : (clientGameState.state === "SimpleSwapPack")
                           ? opt({
                             entryType: "simple",
-                            enteringTitle: "Replacing (from Community Pool)"
+                            enteringTitle: "Replacements (from Community Pool)"
                           })
                           : opt({
                             entryType: "strategic",
                             enterableTitle: "Community Pools",
-                            enteringTitle: "Replacing",
+                            enteringTitle: "Taking",
                             communityPools: clientGameState.communityPools,
                           })
                     ),
@@ -5543,9 +5551,9 @@ export default function MenuGame(props: MenuGameProps) {
                         const newReadyPoolCount = readyPoolSize + selectedForEntryCount - selectedForExitCount;
                         if (newReadyPoolCount != readyPoolSize) {
                           if (newReadyPoolCount < readyPoolSize) {
-                            alert(`You have too few products (you have ${newReadyPoolCount}; must have ${readyPoolSize}). Take more products from the community pools, or recycle fewer products!`);
+                            alert(`The swap would leave you with too few contracts (you would have ${newReadyPoolCount}; must have ${readyPoolSize}). Claim more contracts from the community pools, or recycle fewer contracts.`);
                           } else {
-                            alert(`You have too many products (you have ${newReadyPoolCount}; must have only ${readyPoolSize}). Recycle more products, or take fewer products from the community pools!`);
+                            alert(`The swap would leave you with too many contracts (you would have ${newReadyPoolCount}; must have only ${readyPoolSize}). Recycle more contracts, or claim fewer contracts from the community pools.`);
                           }
                         } else {
                           clientSendClientEventToServer({
@@ -5802,7 +5810,7 @@ export default function MenuGame(props: MenuGameProps) {
                   </span>
                   <span>{" "}{props.settings.generalPoolContractCounts.get(p.type)}x</span>
                 </div>
-                <SupplyContract productType={opt(p.type)} />
+                <SupplyContract productType={opt(p.type)} highlighted={false} />
               </div>
             ))
             .arr
