@@ -90,6 +90,10 @@ declare global {
     skip(count: number): T[]
     take(count: number): T[]
 
+    /**
+     * Like zip, but extra elements are dropped if one of the arrays is bigger than the other.
+     */
+    takeZip<U>(other: U[]): [T, U][]
     zip<U>(other: U[]): [T, U][] | undefined
   }
 }
@@ -176,15 +180,18 @@ Array.prototype.take = function <T>(this: T[], count: number) {
   return this.slice(0, count);
 }
 
-Array.prototype.zip = function <T, U>(this: T[], other: U[]) {
-  if (this.length !== other.length) {
-    return undefined;
-  }
+Array.prototype.takeZip = function <T, U>(this: T[], other: U[]) {
   return this.filterTransform((x, i) => {
     const y = other[i];
     if (y === undefined) return nullopt;
     return opt([x, y]);
-  });;
+  });
+}
+Array.prototype.zip = function <T, U>(this: T[], other: U[]) {
+  if (this.length !== other.length) {
+    return undefined;
+  }
+  return this.takeZip(other);
 }
 
 declare global {

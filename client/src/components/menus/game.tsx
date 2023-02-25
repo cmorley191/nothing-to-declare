@@ -129,6 +129,8 @@ function useGameAnimationStep(animation: Optional<GameAnimationSequence>) {
   return { iGameAnimationStep, gameAnimationStep };
 }
 
+const initialRecyclePoolContractCount = 10;
+
 /**
  * Returns a number of randomly-chosen supply contracts (specifically, returns their ProductType) 
  * from the general pool, and updates the general pool in-place to reflect the removed contracts.
@@ -142,6 +144,11 @@ function takeContractsFromGeneralPool(gameSettings: GameSettings, contractPools:
   // refresh general pool if it's about to be empty
   if (generalPoolTotalContractCount + 1 < numContracts) {
     contractPools.generalPoolContractCounts = gameSettings.generalPoolContractCounts.shallowCopy();
+    contractPools.recyclePoolsContracts = contractPools.recyclePoolsContracts.map(p => p.take(initialRecyclePoolContractCount));
+    contractPools.recyclePoolsContracts.forEach(pool => {
+      pool.forEach(product => contractPools.generalPoolContractCounts.set(product, contractPools.generalPoolContractCounts.get(product) - 1))
+    });
+
     generalPoolTotalContractCount = contractPools.generalPoolContractCounts.arr.reduce((a, b) => a + b);
   }
 
@@ -179,7 +186,9 @@ function generateInitialPersistentGameState(gameSettings: GameSettings, players:
   const generalPoolContractCounts = gameSettings.generalPoolContractCounts.shallowCopy();
   const contractPools: CommunityContractPools = {
     generalPoolContractCounts: generalPoolContractCounts,
-    recyclePoolsContracts: [[], []]
+    recyclePoolsContracts:
+      Array(2).fill(false)
+        .map(() => takeContractsFromGeneralPool(gameSettings, { generalPoolContractCounts, recyclePoolsContracts: [[], []] }, initialRecyclePoolContractCount))
   };
 
   const traderSupplies =
@@ -902,17 +911,18 @@ function SupplyContract(props: {
   );
 }
 
-type LocalReadyPoolSupplyContractData = {
+type InteractableSupplyContractData = {
   productType: Optional<ProductType>,
-  style: ("visible" | "faded" | "hidden"),
+  style: ("visible" | "slightly faded" | "faded" | "hidden"),
   clickable: boolean,
 };
+
 /**
  * (Element) One of the tables of supply contracts in the local ready pool display.
  */
-function LocalReadyPoolSupplyContracts(props: {
+function SupplyContractsInteractableGrid(props: {
   usekey: string,
-  contracts: LocalReadyPoolSupplyContractData[],
+  contracts: InteractableSupplyContractData[],
   onClick?: (event: { event: MouseEvent, iContract: number }) => void;
   [otherOptions: string]: unknown
 }) {
@@ -938,7 +948,7 @@ function LocalReadyPoolSupplyContracts(props: {
                     <td
                       key={`${props.usekey}_supply_contract_${c.iContract}`}
                       style={{
-                        opacity: (c.style === "visible") ? 1 : (c.style == "faded") ? 0.3 : 0,
+                        opacity: (c.style === "visible") ? 1 : (c.style == "faded") ? 0.3 : (c.style == "slightly faded") ? 0.6 : 0,
                         display: "inline-block",
                         width: `${Math.floor(100 / (iRow == 0 ? g.length : contractsPerRow)) - 1}%`,
                       }}
@@ -961,6 +971,47 @@ function LocalReadyPoolSupplyContracts(props: {
             ))
         }
       </table>
+    </div >
+  );
+}
+
+/**
+ * (Element) A stack of supply contracts, a substack of which can be interacted with, for the recycle community pool displays.
+ */
+function SupplyContractsInteractableStack(props: {
+  usekey: string,
+  contracts: (
+    & InteractableSupplyContractData
+    & {
+      positionOffset: { left: string, top: string },
+      zIndex: number,
+    }
+  )[],
+  onClick?: (event: { event: MouseEvent, iContract: number }) => void;
+  [otherOptions: string]: unknown
+}) {
+  const attrs = omitAttrs(['usekey', 'contracts', 'onClick'], props);
+
+  return (
+    <div {...attrs} key={props.usekey}>
+      {
+        props.contracts
+          .map((c, iContract) => (
+            <div
+              key={`${props.usekey}_supply_contract_${iContract}`}
+              style={{
+                opacity: (c.style === "visible") ? 1 : (c.style == "faded") ? 0.3 : (c.style == "slightly faded") ? 0.6 : 0,
+                display: "inline-block",
+                position: "absolute",
+                ...c.positionOffset,
+                zIndex: c.zIndex,
+              }}
+              onClick={(event) => { if (c.clickable && props.onClick !== undefined) props.onClick({ event: event.nativeEvent, iContract }) }}
+            >
+              <SupplyContract productType={c.productType} />
+            </div>
+          ))
+      }
     </div >
   );
 }
@@ -1144,6 +1195,12 @@ function LocalReadyPool(props: {
     setModeState(modePropsAsModeState(mode));
   }
 
+  const recycleDataZipped =
+    (mode.mode == "select for exit" && mode.entry.hasValue === true && mode.entry.value.entryType === "strategic")
+      ? mode.entry.value.selectedForEntry.recyclePoolSelectedCounts
+        .zip(mode.entry.value.props.communityPools.recyclePoolsContracts)
+      : [];
+
   return (
     <Section key={props.usekey} {...attrs}>
       <Section
@@ -1154,11 +1211,15 @@ function LocalReadyPool(props: {
             ? (
               <Section key={`${props.usekey}_enterable_pool`}
                 title={mode.entry.value.props.enterableTitle}
-                style={{ display: "inline-block", verticalAlign: "top" }}
+                style={{
+                  display: "inline-block",
+                  verticalAlign: "top",
+                  position: "relative",
+                }}
               >
                 <img
                   src={contractBoardImgSrc}
-                  style={{ width: "500px" }}
+                  style={{ width: "600px" }}
                   onClick={() => {
                     if (mode.mode == "select for exit" && mode.entry.hasValue === true && mode.entry.value.entryType === "strategic") {
                       if (mode.entry.value.selectedForEntry.generalPoolSelectedCount < readyPoolSize) {
@@ -1181,6 +1242,79 @@ function LocalReadyPool(props: {
                     }
                   }}
                 />
+                {
+                  (() => {
+                    const entry = mode.entry.value;
+                    if (recycleDataZipped === undefined) return undefined;
+
+                    // get from rng seeded with products in discard pile (or something else fixed?)
+                    const positionOffsetsJitter: [number, number][] = [[1, 1], [-1, -5], [-3, -3], [3, 1], [-4, 2], [-1, 5], [-3, -4], [-2, 3], [4, -4], [-4, -5]];
+                    const positionOffsets =
+                      positionOffsetsJitter.map(([leftJitter, topJitter], iPos) => ({
+                        left: leftJitter * 2,
+                        top: (iPos < readyPoolSize ? iPos * 20 : (readyPoolSize * 20) + ((iPos - readyPoolSize) * 4)) + topJitter,
+                      }));
+
+                    return recycleDataZipped
+                      .map(([selectedCount, pool], iPool) => (
+                        <SupplyContractsInteractableStack
+                          key={`${props.usekey}_enterable_recycle_pool_${iPool}`}
+                          style={{
+                            position: "absolute",
+                            left: iPool == 0 ? "80px" : "410px",
+                            top: "125px",
+                          }}
+                          usekey={`${props.usekey}_enterable_recycle_pool_${iPool}`}
+                          contracts={
+                            pool
+                              .takeZip(positionOffsets)
+                              .map(([p, positionOffset], iContract) => ({
+                                productType: opt(p),
+                                style: iContract < selectedCount ? "slightly faded" : "visible",
+                                clickable: iContract < readyPoolSize,
+                                positionOffset: {
+                                  left: `${positionOffset.left + ((iContract >= selectedCount) ? 0 : (iPool == 0) ? -50 : 50)}px`,
+                                  top: `${positionOffset.top}px`,
+                                },
+                                zIndex:
+                                  (iContract >= readyPoolSize)
+                                    ? positionOffsets.length - 1 - iContract
+                                    : (iContract <= selectedCount)
+                                      ? (iContract + positionOffsets.length - selectedCount - 1 + readyPoolSize)
+                                      : positionOffsets.length - 1 - iContract,
+                              }))
+                          }
+                          onClick={(e) => {
+                            const selectedIContract = pool[e.iContract];
+                            if (selectedIContract === undefined || e.iContract >= readyPoolSize) {
+                              console.log(`Bad iContract from recycle enterable pool LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
+                              console.trace();
+                            } else {
+                              const newSelectedForEntry = {
+                                ...entry.selectedForEntry,
+                                recyclePoolSelectedCounts: (() => {
+                                  const newCounts = entry.selectedForEntry.recyclePoolSelectedCounts.shallowCopy();
+                                  newCounts[iPool] = e.iContract + ((e.iContract < selectedCount) ? 0 : 1)
+                                  return newCounts;
+                                })(),
+                              };
+                              setModeState({
+                                ...mode,
+                                entry: opt({
+                                  ...entry,
+                                  selectedForEntry: newSelectedForEntry
+                                })
+                              });
+                              if (mode.onChange !== undefined) mode.onChange({
+                                selectedForExit: mode.selectedForExit,
+                                selectedForEntry: opt(newSelectedForEntry)
+                              });
+                            }
+                          }}
+                        />
+                      ));
+                  })()
+                }
               </Section>
             )
             : undefined
@@ -1189,7 +1323,7 @@ function LocalReadyPool(props: {
           title={mode.mode == "select for exit" ? "Keep" : undefined}
           style={{ display: "inline-block", verticalAlign: "top" }}
         >
-          <LocalReadyPoolSupplyContracts
+          <SupplyContractsInteractableGrid
             usekey={`${props.usekey}_ready_pool_contracts`}
             contracts={
               (mode.mode === "static")
@@ -1228,11 +1362,6 @@ function LocalReadyPool(props: {
             (mode.mode == "select for exit" && mode.entry.hasValue === true)
               ? (
                 (() => {
-                  const recycleDataZipped =
-                    (mode.entry.value.entryType === "strategic")
-                      ? mode.entry.value.selectedForEntry.recyclePoolSelectedCounts
-                        .zip(mode.entry.value.props.communityPools.recyclePoolsContracts)
-                      : [];
                   if (recycleDataZipped === undefined) return undefined;
 
                   const generalPoolSection = (
@@ -1242,7 +1371,7 @@ function LocalReadyPool(props: {
                         : `${mode.entry.value.props.enteringTitle} (Random)`
                       }
                     >
-                      <LocalReadyPoolSupplyContracts
+                      <SupplyContractsInteractableGrid
                         usekey={`${props.usekey}_ready_pool_contracts_entering_general_pool`}
                         contracts={
                           Array((mode.entry.value.entryType === "simple")
@@ -1250,7 +1379,7 @@ function LocalReadyPool(props: {
                             : mode.entry.value.selectedForEntry.generalPoolSelectedCount
                           )
                             .fill(false)
-                            .map((): LocalReadyPoolSupplyContractData => ({
+                            .map((): InteractableSupplyContractData => ({
                               productType: nullopt,
                               style: "visible",
                               clickable: (mode.entry.hasValue === true && mode.entry.value.entryType === "strategic"), // TODO FIX hasValue should always be true
@@ -1296,13 +1425,13 @@ function LocalReadyPool(props: {
                         .map(({ selectedCount, pool, iPool }) => {
                           return (
                             <Section key={`${props.usekey}_ready_entering_recycle_pool_${iPool}`}
-                              title={`${entry.props.enterableTitle} (Urgent ${iPool + 1})`}
+                              title={`${entry.props.enteringTitle} (from Urgent ${iPool + 1})`}
                             >
-                              <LocalReadyPoolSupplyContracts
+                              <SupplyContractsInteractableGrid
                                 usekey={`${props.usekey}_ready_pool_contracts_entering_recycle_pool_${iPool}`}
                                 contracts={
                                   pool.take(selectedCount)
-                                    .map((p): LocalReadyPoolSupplyContractData => ({
+                                    .map((p): InteractableSupplyContractData => ({
                                       productType: opt(p),
                                       style: "visible",
                                       clickable: true,
@@ -1352,7 +1481,7 @@ function LocalReadyPool(props: {
                 style={{ display: "inline-block", verticalAlign: "top" }}
                 title={mode.exitTitle}
               >
-                <LocalReadyPoolSupplyContracts
+                <SupplyContractsInteractableGrid
                   usekey={`${props.usekey}_exit_contracts`}
                   contracts={
                     (props.contracts
@@ -2828,19 +2957,33 @@ export default function MenuGame(props: MenuGameProps) {
           const nextState: Optional<SerializableServerGameState> = (() => {
             const newPools: CommunityContractPools = {
               generalPoolContractCounts: serverGameState.communityPools.generalPoolContractCounts.shallowCopy(),
-              recyclePoolsContracts: [serverGameState.communityPools.recyclePoolsContracts[0]?.shallowCopy() ?? []].concat(serverGameState.communityPools.recyclePoolsContracts.skip(1))
+              recyclePoolsContracts: serverGameState.communityPools.recyclePoolsContracts.map(p => p.shallowCopy()),
             };
             const readyPoolRecycling =
               serverGameState.traderSupplies.get(iPlayerEvent).readyPool
                 .zip(event.data.recycled);
-            if (readyPoolRecycling === undefined) {
+            const recyclePoolTaking = event.data.took.recycledPools.zip(newPools.recyclePoolsContracts);
+            if (readyPoolRecycling === undefined
+              || recyclePoolTaking === undefined
+              || (
+                event.data.recycled.filter(r => r).length
+                != (
+                  event.data.took.recycledPools.reduce((a, b) => a + b)
+                  + event.data.took.generalPool
+                )
+              )
+            ) {
               console.log(`Received bad SWAP_SUPPLY_CONTRACTS client event: ${JSON.stringify(event)}`);
               console.trace();
               return nullopt;
             }
             const [readyPoolRecycled, newReadyPool] = readyPoolRecycling.splitMap(([product, recycling]) => [recycling, product]);
-            newReadyPool.push(...takeContractsFromGeneralPool(props.settings, newPools, readyPoolRecycled.length));
-            (newPools.recyclePoolsContracts[0] ?? []).push(...readyPoolRecycled);
+            recyclePoolTaking
+              .forEach(([taking, recyclePool]) => {
+                newReadyPool.push(...recyclePool.splice(0, taking))
+              })
+            newReadyPool.push(...takeContractsFromGeneralPool(props.settings, newPools, event.data.took.generalPool));
+            (newPools.recyclePoolsContracts[getRandomInt(newPools.recyclePoolsContracts.length)] ?? []).unshift(...readyPoolRecycled);
             const newTraderSupplies = serverGameState.traderSupplies.shallowCopy();
             newTraderSupplies.set(iPlayerEvent, {
               ...serverGameState.traderSupplies.get(iPlayerEvent),
@@ -5139,12 +5282,12 @@ export default function MenuGame(props: MenuGameProps) {
                         : (clientGameState.state === "SimpleSwapPack")
                           ? opt({
                             entryType: "simple",
-                            enteringTitle: "Replacing from Community Pool"
+                            enteringTitle: "Replacing (from Community Pool)"
                           })
                           : opt({
                             entryType: "strategic",
                             enterableTitle: "Community Pools",
-                            enteringTitle: "Take",
+                            enteringTitle: "Replacing",
                             communityPools: clientGameState.communityPools,
                           })
                     ),
@@ -5157,7 +5300,7 @@ export default function MenuGame(props: MenuGameProps) {
                             ? selectedForExitCount
                             : (selectedForEntry.hasValue === false)
                               ? 0
-                              : selectedForEntry.value.generalPoolSelectedCount
+                              : (selectedForEntry.value.generalPoolSelectedCount + selectedForEntry.value.recyclePoolSelectedCounts.reduce((a, b) => a + b))
                         );
                         const newReadyPoolCount = readyPoolSize + selectedForEntryCount - selectedForExitCount;
                         if (newReadyPoolCount != readyPoolSize) {
@@ -5171,7 +5314,17 @@ export default function MenuGame(props: MenuGameProps) {
                             type: NetworkTypes.ClientEventType.SWAP_SUPPLY_CONTRACTS,
                             data: {
                               sourceClientId: props.localInfo.clientId,
-                              recycled: selectedForExit
+                              recycled: selectedForExit,
+                              took:
+                                (selectedForEntry.hasValue === true)
+                                  ? {
+                                    recycledPools: selectedForEntry.value.recyclePoolSelectedCounts,
+                                    generalPool: selectedForEntry.value.generalPoolSelectedCount,
+                                  }
+                                  : {
+                                    recycledPools: clientGameState.communityPools.recyclePoolsContracts.map(() => 0),
+                                    generalPool: 0,
+                                  }
                             }
                           });
                         }

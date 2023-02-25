@@ -131,6 +131,10 @@ export interface ClientSelectPlayerIconEventData {
 export interface ClientSwapSupplyContractsEventData {
   sourceClientId: number,
   recycled: boolean[],
+  took: {
+    recycledPools: number[],
+    generalPool: number,
+  },
 }
 export interface ClientPackCartEventData {
   sourceClientId: number,
