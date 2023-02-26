@@ -17,7 +17,13 @@ type MenuLobbyProps = {
   ws: BufferedWebSocket,
 
   onClose: (args: { warning: string }) => void
-  onStartGame: (args: { hostInfo: NetworkTypes.HostClientInfo, gameSettings: GameSettings, finalLocalName: string, otherClients: NetworkTypes.ClientInfo[] }) => void
+  onStartGame: (args: {
+    hostInfo: NetworkTypes.HostClientInfo,
+    gameSettings: GameSettings,
+    finalLocalName: string,
+    localIcon: string,
+    otherClients: (NetworkTypes.ClientInfo & { icon: string })[]
+  }) => void
 };
 
 type HostInfo =
@@ -241,9 +247,11 @@ export default function MenuLobby(props: MenuLobbyProps) {
                 swapMode: event.data.gameSettings.swapMode,
               },
               finalLocalName: `${lobbyMachineState.selectedPlayerIcon.hasValue == true ? lobbyMachineState.selectedPlayerIcon.value : ""}${props.localInfo.localPlayerName}`,
+              localIcon: lobbyMachineState.selectedPlayerIcon.hasValue == true ? lobbyMachineState.selectedPlayerIcon.value : "",
               otherClients: otherPlayers.map(([c, icon]) => ({
                 ...c,
-                name: `${(icon.hasValue == true) ? icon.value : ""}${c.name}`
+                name: `${(icon.hasValue == true) ? icon.value : ""}${c.name}`,
+                icon: icon.hasValue === true ? icon.value : "",
               })),
             })
           } break;

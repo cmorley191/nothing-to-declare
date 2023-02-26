@@ -19,8 +19,8 @@ type AppMachineState =
   | { state: "Connecting", connectInfo: ConnectInfo, ws: BufferedWebSocket }
   | { state: "Lobby", connectInfo: ConnectInfo, ws: BufferedWebSocket, localClientIsHost: boolean, clientId: number }
   | {
-    state: "Game", connectInfo: ConnectInfo, ws: BufferedWebSocket,
-    hostInfo: NetworkTypes.HostClientInfo, gameSettings: GameSettings, clientId: number, otherClients: NetworkTypes.ClientInfo[]
+    state: "Game", connectInfo: ConnectInfo, localIcon: string, ws: BufferedWebSocket,
+    hostInfo: NetworkTypes.HostClientInfo, gameSettings: GameSettings, clientId: number, otherClients: (NetworkTypes.ClientInfo & { icon: string })[]
   };
 
 export default function App({ }: AppProps) {
@@ -120,7 +120,7 @@ export default function App({ }: AppProps) {
             });
           }}
 
-          onStartGame={({ hostInfo, gameSettings, finalLocalName, otherClients }) => {
+          onStartGame={({ hostInfo, gameSettings, finalLocalName, localIcon, otherClients }) => {
             appMachineState.ws.unsetHandlers();
 
             setAppMachineState({
@@ -129,6 +129,7 @@ export default function App({ }: AppProps) {
                 ...appMachineState.connectInfo,
                 localPlayerName: finalLocalName,
               },
+              localIcon,
               ws: appMachineState.ws,
               clientId: appMachineState.clientId,
               hostInfo,
@@ -141,7 +142,7 @@ export default function App({ }: AppProps) {
     case "Game": {
       const clients = PlayerArray.constructFirstPlayerArray(
         appMachineState.otherClients
-          .concat({ clientId: appMachineState.clientId, name: appMachineState.connectInfo.localPlayerName })
+          .concat({ clientId: appMachineState.clientId, name: appMachineState.connectInfo.localPlayerName, icon: appMachineState.localIcon })
           .sort((a, b) => a.clientId - b.clientId)
       );
       if (clients.hasValue === false) {

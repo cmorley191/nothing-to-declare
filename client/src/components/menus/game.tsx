@@ -12,6 +12,7 @@ import parchmentLegalImgSrc from '../../../images/parchment.png';
 import parchmentLegalHighlightedImgSrc from '../../../images/parchment_highlighted.png';
 import parchmentIllegalImgSrc from '../../../images/parchment_red.png';
 import parchmentIllegalHighlightedImgSrc from '../../../images/parchment_red_highlighted.png';
+import visaScrollImgSrc from '../../../images/parchment_clear_scroll.png';
 import contractBoardImgSrc from '../../../images/supply_contract_board.png';
 import cartEmptyImgSrc from '../../../images/cart_empty.png';
 import cartClosedLabeledImgSrc from '../../../images/cart_closed_labeled.png';
@@ -31,7 +32,7 @@ type MenuGameProps = {
   localInfo: LocalInfo,
   hostInfo: NetworkTypes.HostClientInfo,
   settings: GameSettings,
-  clients: PlayerArray<NetworkTypes.ClientInfo>,
+  clients: PlayerArray<NetworkTypes.ClientInfo & { icon: string }>,
   ws: BufferedWebSocket,
 
   onClose: (props: { warning: string }) => void
@@ -5008,6 +5009,7 @@ export default function MenuGame(props: MenuGameProps) {
                     ? (() => {
                       const PaymentArea = (paymentAreaProps: {
                         title: string,
+                        visaText: string,
                         animation: Optional<GameAnimationSequence>,
                       }) => {
                         const [iGameAnimationStep, setIGameAnimationStep] = React.useState(0);
@@ -5072,44 +5074,132 @@ export default function MenuGame(props: MenuGameProps) {
                             && paymentAreaProps.animation.value.sequence.some((step, i) => iGameAnimationStep >= i - 1 && step.type == "payment" && step.iPlayerGiver == p.iPlayerGiver));
                         */
 
+                        const paymentData =
+                          payments
+                            .map(payment => ({
+                              payment,
+                              givingList: (
+                                <div>
+                                  {
+                                    [
+                                      {
+                                        icon: moneyIcon,
+                                        amount: payment.payment.money
+                                      }
+                                    ]
+                                      .filter(s => s.amount > 0)
+                                      .map(s => (
+                                        <span key={`menu_game_payment_player_${iPlayerToNum(payment.iPlayerGiver)}_icon_${s.icon}`}>
+                                          {s.amount}{" "}
+                                          <span
+                                            style={{ opacity: (iGameAnimationStep > payment.iAnimationStepGive && iGameAnimationStep < payment.iAnimationStepDistribute) ? 1 : 0.3 }}
+                                            id={`menu_game_payment_player_${iPlayerToNum(payment.iPlayerGiver)}_item_money`}>{s.icon}
+                                          </span>
+                                        </span>
+                                      ))
+                                  }
+                                </div>
+                              )
+                            }));
+
                         return (
                           <Section title={paymentAreaProps.title} style={{ opacity: payments.some(p => iGameAnimationStep >= p.iAnimationStepReveal) ? 1 : 0 }}>
                             {
-                              payments
-                                .map(payment => {
-                                  const givingList = (() => (
-                                    <div>
-                                      {
-                                        [
-                                          {
-                                            icon: moneyIcon,
-                                            amount: payment.payment.money
-                                          }
-                                        ]
-                                          .filter(s => s.amount > 0)
-                                          .map(s => (
-                                            <span key={`menu_game_payment_player_${iPlayerToNum(payment.iPlayerGiver)}_icon_${s.icon}`}>
-                                              {s.amount}{" "}
-                                              <span
-                                                style={{ opacity: (iGameAnimationStep > payment.iAnimationStepGive && iGameAnimationStep < payment.iAnimationStepDistribute) ? 1 : 0.3 }}
-                                                id={`menu_game_payment_player_${iPlayerToNum(payment.iPlayerGiver)}_item_money`}>{s.icon}
-                                              </span>
-                                            </span>
-                                          ))
-                                      }
-                                    </div>
-                                  ))();
+                              (() => {
+                                const payment0 = paymentData[0];
+                                if (payment0 !== undefined && paymentData.length <= 2) {
+                                  const payment1 = paymentData[1];
 
                                   return (
-                                    <Section
-                                      key={`menu_game_payment_area_${iPlayerToNum(payment.iPlayerGiver)}`}
-                                      title={`${props.clients.get(payment.iPlayerGiver).name} pays:`}
-                                      style={{ opacity: iGameAnimationStep >= payment.iAnimationStepReveal ? 1 : 0 }}
-                                    >
-                                      {givingList}
-                                    </Section>
+
+                                    <div style={{
+                                      display: "inline-block",
+                                      width: "100%",
+                                      textAlign: "center",
+                                      backgroundImage: `url(${visaScrollImgSrc})`,
+                                      backgroundSize: "contain",
+                                      backgroundPosition: "center",
+                                      backgroundRepeat: "no-repeat",
+                                      zIndex: -4,
+                                    }}>
+                                      <div style={{ opacity: 0 }}>
+                                        <div>~</div>
+                                        <div>~</div>
+                                      </div>
+                                      <div>
+                                        {
+                                          paymentAreaProps.visaText
+                                            .split("\n")
+                                            .map((l, i) =>
+                                              l.trim() == ""
+                                                ? (<div style={{ opacity: 0 }}>~</div>)
+                                                : (
+                                                  <div style={
+                                                    (i == 0)
+                                                      ? {
+                                                        fontSize: "130%",
+                                                        fontWeight: "bold",
+                                                      }
+                                                      : {}
+                                                  }>
+                                                    {l}
+                                                  </div>)
+                                            )
+                                        }
+                                      </div>
+                                      <div>
+                                        {payment0.givingList}
+                                        {payment1?.givingList}
+                                      </div>
+                                      <div>
+                                        <div style={{
+                                          display: "inline-block",
+                                          verticalAlign: "middle",
+                                          marginRight: "30px"
+                                        }}>
+                                          Duty Officer:
+                                        </div>
+                                        <div style={{
+                                          display: "inline-block",
+                                          verticalAlign: "middle",
+                                          fontSize: "200%",
+                                          borderWidth: "2px",
+                                          borderStyle: "dashed",
+                                          borderRadius: "15px",
+                                          borderColor: "black",
+                                        }}>
+                                          <div style={{ margin: "5px" }} >
+                                            {props.clients.get(iPlayerOfficer).icon}
+                                          </div>
+                                        </div>
+                                      </div>
+                                      <div style={{ opacity: 0 }}>
+                                        <div>~</div>
+                                        <div>~</div>
+                                      </div>
+                                    </div>
+                                  )
+                                } else {
+                                  return (
+                                    <div>
+                                      {
+                                        paymentData
+                                          .map(({ payment, givingList }) => {
+                                            return (
+                                              <Section
+                                                key={`menu_game_payment_area_${iPlayerToNum(payment.iPlayerGiver)}`}
+                                                title={`${props.clients.get(payment.iPlayerGiver).name} pays:`}
+                                                style={{ opacity: iGameAnimationStep >= payment.iAnimationStepReveal ? 1 : 0 }}
+                                              >
+                                                {givingList}
+                                              </Section>
+                                            );
+                                          })
+                                      }
+                                    </div>
                                   );
-                                })
+                                }
+                              })()
                             }
                           </Section>
                         );
@@ -5126,6 +5216,39 @@ export default function MenuGame(props: MenuGameProps) {
                           <PaymentArea
                             key={`menu_game_payment_area_rerender_${renderCount.current}`}
                             title={activeCart.cart.products.every(p => p == activeCart.cart.claimedType) ? "Trader unreasonably searched!" : "Smuggling caught!"}
+                            visaText={
+                              (activeCart.cart.products.every(p => p == activeCart.cart.claimedType))
+                                ? (
+                                  `Incident Report #${getRandomInt(8999) + 1000}
+                                   
+                                  The individual known as
+                                  ${props.clients.get(iPlayerActiveTrader).name}
+                                  is hereby permitted to enter and conduct business in
+                                  ${"Some City Name"},
+                                  having been compensated for unlwaful search 
+                                  in compliance with Trade Code § 438-29, 
+                                  paid at the scene in the amount of:`
+                                )
+                                : (
+                                  `Incident Report #${getRandomInt(8999) + 1000}
+                                   
+                                  The individual known as
+                                  ${props.clients.get(iPlayerActiveTrader).name},
+                                  having issued a false statement 
+                                  in volation of Trade Code § 438-12, 
+                                  is granted conditional entry to
+                                  ${"Some City Name"}
+                                  subject to confiscation of
+                                  ${activeCart.cart.products
+                                    .groupBy(p => p)
+                                    .filter(g => g.key !== activeCart.cart.claimedType)
+                                    .map(g => (`${getProductInfo(g.key).icon}${g.group.length}`))
+                                    .join(", ")
+                                  }
+                                  and fines paid at the scene 
+                                  in the amount of:`
+                                )
+                            }
                             animation={animation}
                           />
                         );
@@ -5134,6 +5257,16 @@ export default function MenuGame(props: MenuGameProps) {
                           <PaymentArea
                             key={`menu_game_payment_area_rerender_${renderCount.current}`}
                             title={"Deal accepted!"}
+                            visaText={
+                              `Entry Visa #${getRandomInt(8999) + 1000}
+                               
+                              The individual known as
+                              ${props.clients.get(iPlayerActiveTrader).name}
+                              is hereby permitted to enter and conduct business in 
+                              ${"Some City Name"},
+                              having paid the required border control 
+                              "administrative fees" in the amounts of:`
+                            }
                             animation={animation}
                           />
                         );
