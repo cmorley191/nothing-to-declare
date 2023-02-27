@@ -115,10 +115,25 @@ export interface ServerStartGameEventData {
 export interface ServerStateUpdateEventData {
   state: SerializableServerGameState
 }
-export type OfficerToolState = Optional<{
-  tool: "crowbar" | "approval stamp",
-  useProgress: number
-}>;
+export type EntryVisaStamp = {
+  x: number,
+  y: number,
+};
+export type OfficerToolStampState = {
+  offset: { x: number, y: number },
+  stamps: EntryVisaStamp[],
+  heldByOfficer: boolean,
+};
+export type OfficerToolState = Optional<
+  | {
+    tool: "crowbar",
+    useProgress: number
+  }
+  | {
+    tool: "stamp",
+    state: OfficerToolStampState,
+  }
+>;
 export interface ServerOfficerToolUpdateEventData {
   newToolState: OfficerToolState
 }
@@ -159,6 +174,8 @@ export interface ClientCustomsActionEventData {
   | { action: "reject deal" }
   | { action: "accept deal" }
   // other action:
+  | { action: "resolve confirmation ready" }
+  | { action: "confirm resolve", entryVisaStamps: EntryVisaStamp[] }
   | { action: "resolve completed" }
 }
 

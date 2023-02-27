@@ -21,6 +21,8 @@ import cartOpenLabeledImgSrc from '../../../images/cart_open_labeled.png';
 import cartOpenUnlabeledImgSrc from '../../../images/cart_open_unlabeled.png';
 import cartLidImgSrc from '../../../images/cart_lid.png';
 import crowbarImgSrc from '../../../images/crowbar.png';
+import stampImgSrc from '../../../images/stamper.png';
+import { OfficerToolStampState } from "../../core/network_types";
 
 type LocalInfo = {
   localPlayerName: string,
@@ -39,10 +41,9 @@ type MenuGameProps = {
 };
 
 /**
- * Minimum time between network events sent related to the Customs state's officer crowbar.
+ * Minimum time between network events sent related to the Customs state's officer crowbar / stamp.
  */
-const crowbarUpdateMinIntervalMs = 150;
-
+const officerToolUpdateMinIntervalMs = 150;
 
 type WaitAnimationStep = {
   type: "wait",
@@ -73,7 +74,7 @@ type PaymentGameAnimationStep = {
   type: "payment",
   iPlayerGiver: ValidPlayerIndex,
   iPlayerReceiver: ValidPlayerIndex,
-  action: "give" | "receive",
+  action: "reveal if not yet revealed" | "give" | "receive",
   payment: {
     money: number,
   },
@@ -92,6 +93,8 @@ type GameAnimationStep =
 type GameAnimationSequence = {
   sequence: GameAnimationStep[],
   onCompleteRegistrations: (() => void)[][],
+  previousGameStateSequence: Optional<GameAnimationStep[]>,
+  persistToNextGameState: boolean,
 }
 
 /**
@@ -130,6 +133,100 @@ function useGameAnimationStep(animation: Optional<GameAnimationSequence>) {
   }, []);
 
   return { iGameAnimationStep, gameAnimationStep };
+}
+
+/**
+ * (React hook) Provides a more detailed interface with the current step in the GameAnimationSequence.
+ * 
+ * In addition to the data provided by useGameAnimationStep, a set of provided "state" (arbitrary state type)
+ * constructors are used to generate a list of the states before and after each animation step. The states
+ * surrounding the current animation step are provided explicitly.
+ *
+ * @param propsState the state provided by the props. This is not necessary the state before the first animation
+ *                   step -- if there was a persistent animation sequence from previous game state(s), the props
+ *                   are expected to not have been updated (i.e. this would be the state before the previous sequence)
+ */
+function useGameAnimationStates<TState>(args: {
+  animation: Optional<GameAnimationSequence>,
+  propsState: TState,
+  getPostStepState: (args: {
+    step: GameAnimationStep,
+    iStep: number,
+    onCompleteRegistration: (() => void)[],
+    callAllOnCompletes: () => void,
+    previousState: TState,
+    previousStates: TState[],
+  }) => TState,
+  getPostSequenceState: (args: {
+    previousState: TState,
+    previousStates: TState[],
+  }) => TState,
+}) {
+  const { iGameAnimationStep, gameAnimationStep } = useGameAnimationStep(args.animation);
+
+  const intermediateData = (() => {
+    const preFullAnimationSequenceState = args.propsState;
+
+    const postFullAnimationStepsStates: TState[] = [];
+
+    if (args.animation.hasValue == true) {
+      const previousGameStateSequence =
+        (args.animation.value.previousGameStateSequence.hasValue === true)
+          ? (
+            args.animation.value.previousGameStateSequence.value
+              .map((s): [GameAnimationStep, (() => void)[]] => [s, []])
+          )
+          : [];
+      const currentSequence =
+        args.animation.value.sequence
+          .zip(args.animation.value.onCompleteRegistrations)
+        ?? [];
+
+      previousGameStateSequence.concat(currentSequence)
+        .forEach(([step, onCompleteRegistration], iStepInFullSequence) => {
+          postFullAnimationStepsStates.push(
+            args.getPostStepState({
+              step,
+              iStep: iStepInFullSequence - previousGameStateSequence.length,
+              onCompleteRegistration,
+              callAllOnCompletes: (() => onCompleteRegistration.forEach(c => c())),
+              previousState: postFullAnimationStepsStates.at(-1) ?? preFullAnimationSequenceState,
+              previousStates: [preFullAnimationSequenceState].concat(postFullAnimationStepsStates),
+            })
+          );
+        });
+    }
+
+    const postAnimationSequenceState = args.getPostSequenceState({
+      previousState: postFullAnimationStepsStates.at(-1) ?? preFullAnimationSequenceState,
+      previousStates: [preFullAnimationSequenceState].concat(postFullAnimationStepsStates),
+    });
+
+    return {
+      preFullAnimationSequenceState,
+      postFullAnimationStepsStates,
+      ...(
+        (args.animation.hasValue === false || args.animation.value.previousGameStateSequence.hasValue === false)
+          ? {
+            preAnimationSequenceState: preFullAnimationSequenceState,
+            postAnimationStepsStates: postFullAnimationStepsStates,
+          }
+          : {
+            preAnimationSequenceState: postFullAnimationStepsStates[args.animation.value.previousGameStateSequence.value.length - 1] ?? preFullAnimationSequenceState,
+            postAnimationStepsStates: postFullAnimationStepsStates.slice(args.animation.value.previousGameStateSequence.value.length),
+          }
+      ),
+      postAnimationSequenceState
+    }
+  })();
+
+  return {
+    iGameAnimationStep,
+    gameAnimationStep,
+    preAnimationStepState: intermediateData.postAnimationStepsStates[iGameAnimationStep - 1] ?? intermediateData.preAnimationSequenceState,
+    postAnimationStepState: intermediateData.postAnimationStepsStates[iGameAnimationStep] ?? intermediateData.postAnimationSequenceState,
+    ...intermediateData,
+  }
 }
 
 const initialRecyclePoolContractCount = 15;
@@ -207,7 +304,11 @@ function generateInitialPersistentGameState(gameSettings: GameSettings, players:
 
   return {
     communityPools: contractPools,
-    traderSupplies
+    traderSupplies,
+    counters: {
+      entryVisa: getRandomInt(7000) + 1000,
+      incidentReport: getRandomInt(7000) + 1000,
+    }
   };
 }
 
@@ -284,7 +385,7 @@ function FloatingDiv(props: {
     return "default position";
   };
   const currentPosition = positionAtAnimationStep(iCurrentAnimationStep);
-  console.log(`floating div ${props.usekey} current position: ${JSON.stringify(currentPosition)}`);
+  //console.log(`floating div ${props.usekey} current position: ${JSON.stringify(currentPosition)}`);
 
   React.useEffect(() => {
     if (currentAnimationStep.action == "notify") {
@@ -373,69 +474,121 @@ function FloatingDiv(props: {
  */
 function ClaimMessageAnimatedRevealingText(props: {
   usekey: string,
-  message: string,
+  initialMessage?: string,
   animation: Optional<GameAnimationSequence>,
   [otherOptions: string]: unknown;
 }) {
-  const attrs = omitAttrs(['animation'], props);
+  const attrs = omitAttrs(['initialMessage', 'animation'], props);
 
-  const { iGameAnimationStep, gameAnimationStep } = useGameAnimationStep(props.animation);
-
-  const messageToMessageLines = (message: string) => {
-    return message.split("\n")
-      .map(l =>
-        l.split(" ")
-          .reduce((a: string[], b: string): string[] => {
-            const lastLine = a.at(-1);
-            if (lastLine === undefined || lastLine.length + b.length > 70) return a.concat([b]);
-            else return a.take(a.length - 1).concat([`${lastLine} ${b}`]);
-          }, [])
-      )
-      .reduce((a, b) => a.concat(b))
+  const messageToMessageLines = (message: Optional<string>) => {
+    return (
+      optValueOr(message, "")
+        .split("\n")
+        .map(l =>
+          l.split(" ")
+            .reduce((a: string[], b: string): string[] => {
+              const lastLine = a.at(-1);
+              if (lastLine === undefined || lastLine.length + b.length > 70) return a.concat([b]);
+              else return a.take(a.length - 1).concat([`${lastLine} ${b}`]);
+            }, [])
+        )
+        .reduce((a, b) => a.concat(b))
+    );
   }
 
-  const [messageLines, setMessageLines] = React.useState(messageToMessageLines(props.message));
-  const [revealProgress, setRevealProgress] = React.useState(props.animation.hasValue == true && props.animation.value.sequence.some(s => s.type === "claim message") ? 0 : 10000000);
+  const { iGameAnimationStep, preAnimationStepState, postAnimationStepState } = (
+    useGameAnimationStates<{
+      message: Optional<string>,
+      onStateReached: Optional<() => void>,
+    }>({
+      animation: props.animation,
+      propsState: {
+        message: props.initialMessage === undefined ? nullopt : opt(props.initialMessage),
+        onStateReached: nullopt,
+      },
+
+      getPostStepState({
+        step,
+        callAllOnCompletes,
+        previousState,
+      }) {
+        if (step.type === "claim message") {
+          return {
+            ...previousState,
+            message: opt(step.message),
+            onStateReached: opt(callAllOnCompletes),
+          };
+        } else {
+          return {
+            ...previousState,
+            onStateReached: nullopt,
+          };
+        }
+      },
+
+      getPostSequenceState({
+        previousState,
+      }) {
+        return {
+          ...previousState,
+          onStateReached: nullopt,
+        };
+      },
+    })
+  );
+
+  const messageRevealingThisStep =
+    (
+      postAnimationStepState.message.hasValue === true
+      && (
+        preAnimationStepState.message.hasValue === false
+        || preAnimationStepState.message.value !== postAnimationStepState.message.value
+      )
+    )
+      ? opt(postAnimationStepState.message.value)
+      : nullopt;
+
+  const [messageLines, setMessageLines] = React.useState(() => messageToMessageLines(postAnimationStepState.message));
+  const [revealProgress, setRevealProgress] = React.useState(messageRevealingThisStep.hasValue ? 0 : 10000000);
 
   React.useEffect(() => {
-    if (gameAnimationStep.hasValue === true) {
-      const step = gameAnimationStep.value.step;
-      if (step.type === "claim message") {
-        let revealProgress = 0;
-        const stepMessageLines = messageToMessageLines(step.message);
-        const maxRevealProgress = stepMessageLines.map(l => l.length).reduce((a, b) => a + b);
-        setMessageLines(stepMessageLines);
-        setRevealProgress(revealProgress);
-        const interval = window.setInterval((() => {
-          while (true) {
-            if (revealProgress >= maxRevealProgress) {
-              window.clearInterval(interval);
-              gameAnimationStep.value.onCompleteRegistrations.forEach(c => c());
-              break;
-            }
-            revealProgress++;
-            const charRevealed = (() => {
-              let iChar = 0;
-              for (const line of stepMessageLines) {
-                const lineChar = line.at(revealProgress - iChar - 1);
-                if (lineChar !== undefined) return lineChar;
-                iChar += line.length;
-              }
-              return "";
-            })();
-            if (charRevealed !== " ") {
-              break;
-            }
-          }
-          setRevealProgress(revealProgress);
-        }), 1000 / (10 + (step.message.length / 10))); // 20 chars per second
+    if (messageRevealingThisStep.hasValue === true) {
+      const stepMessageLines = messageToMessageLines(opt(messageRevealingThisStep.value));
+      let revealProgress = 0;
+      setMessageLines(stepMessageLines);
+      setRevealProgress(revealProgress);
 
-        return () => {
-          window.clearInterval(interval);
+      const maxRevealProgress = stepMessageLines.map(l => l.length).reduce((a, b) => a + b);
+
+      const interval = window.setInterval((() => {
+        while (true) {
+          if (revealProgress >= maxRevealProgress) {
+            window.clearInterval(interval);
+            if (postAnimationStepState.onStateReached.hasValue === true) postAnimationStepState.onStateReached.value();
+            break;
+          }
+          revealProgress++;
+          const charRevealed = (() => {
+            let iChar = 0;
+            for (const line of stepMessageLines) {
+              const lineChar = line.at(revealProgress - iChar - 1);
+              if (lineChar !== undefined) return lineChar;
+              iChar += line.length;
+            }
+            return "";
+          })();
+          if (charRevealed !== " ") {
+            break;
+          }
         }
+        setRevealProgress(revealProgress);
+      }), 1000 / (10 + (messageRevealingThisStep.value.length / 10))); // 20 chars per second
+
+      return () => {
+        window.clearInterval(interval);
       }
     }
-    return;
+    return undefined;
   }, [iGameAnimationStep]);
 
   const [iRevealLine, iRevealChar] = (() => {
@@ -499,92 +652,84 @@ function TraderSuppliesTable(props: {
   const renderCount = React.useRef(0);
   React.useEffect(() => { renderCount.current++; })
 
-  const { iGameAnimationStep, gameAnimationStep } = useGameAnimationStep(props.animation);
-
-  const [preAnimationSequenceState, postAnimationStepsStates, postAnimationSequenceState] = (() => {
-    const preSequenceState = {
-      supplies: props.supplies,
-      iPlayerPaymentAreaOwner: nullopt,
-      onStateReached: nullopt,
-    };
-
-    const postStepsState: {
+  const { gameAnimationStep, preAnimationStepState, postAnimationStepState, } = (
+    useGameAnimationStates<{
       supplies: TraderSupplies,
       iPlayerPaymentAreaOwner: Optional<ValidPlayerIndex>,
       onStateReached: Optional<() => void>,
-    }[] = [];
+    }>({
+      animation: props.animation,
+      propsState: {
+        supplies: props.supplies,
+        iPlayerPaymentAreaOwner: nullopt,
+        onStateReached: nullopt,
+      },
 
-    if (props.animation.hasValue == true) {
-      (props.animation.value.sequence
-        .zip(props.animation.value.onCompleteRegistrations)
-        ?? [])
-        .forEach(([s, onCompleteRegistration]) => {
-          const postPreviousStepState = postStepsState.at(-1) ?? preSequenceState;
-
-          if (s.type == "payment" && (
-            (s.action == "give" && iPlayerToNum(s.iPlayerGiver) == iPlayerToNum(props.iPlayerOwner))
-            || (s.action == "receive" && iPlayerToNum(s.iPlayerReceiver) == iPlayerToNum(props.iPlayerOwner))
-          )) {
-            postStepsState.push({
-              ...postPreviousStepState,
+      getPostStepState({
+        step,
+        callAllOnCompletes,
+        previousState,
+      }) {
+        if (step.type == "payment" && (
+          (step.action == "give" && iPlayerToNum(step.iPlayerGiver) == iPlayerToNum(props.iPlayerOwner))
+          || (step.action == "receive" && iPlayerToNum(step.iPlayerReceiver) == iPlayerToNum(props.iPlayerOwner))
+        )) {
+          return {
+            ...previousState,
+            supplies: {
+              ...previousState.supplies,
+              money: previousState.supplies.money + (step.action == "give" ? -step.payment.money : step.payment.money),
+            },
+            iPlayerPaymentAreaOwner: opt(step.iPlayerGiver),
+            onStateReached: opt(callAllOnCompletes),
+          };
+        } else if (step.type == "crate contents") {
+          const animation = step.animation;
+          if (animation.animation == "deposit contents") {
+            return {
+              ...previousState,
               supplies: {
-                ...postPreviousStepState.supplies,
-                money: postPreviousStepState.supplies.money + (s.action == "give" ? -s.payment.money : s.payment.money),
+                ...previousState.supplies,
+                shopProductCounts:
+                  previousState.supplies.shopProductCounts
+                    .map((c, p) => (
+                      c + (
+                        animation.contents
+                          .filter((ap) => ap.product == p && ap.destination.destination == "supplies" && iPlayerToNum(ap.destination.iPlayer) == iPlayerToNum(props.iPlayerOwner))
+                          .length
+                      )
+                    )),
               },
-              iPlayerPaymentAreaOwner: opt(s.iPlayerGiver),
-              onStateReached: opt(() => {
-                onCompleteRegistration.forEach(c => c());
-              }),
-            });
-          } else if (s.type == "crate contents") {
-            const animation = s.animation;
-            if (animation.animation == "deposit contents") {
-              postStepsState.push({
-                ...postPreviousStepState,
-                supplies: {
-                  ...postPreviousStepState.supplies,
-                  shopProductCounts:
-                    postPreviousStepState.supplies.shopProductCounts
-                      .map((c, p) => (
-                        c + (
-                          animation.contents
-                            .filter((ap) => ap.product == p && ap.destination.destination == "supplies" && iPlayerToNum(ap.destination.iPlayer) == iPlayerToNum(props.iPlayerOwner))
-                            .length
-                        )
-                      )),
-                },
-                iPlayerPaymentAreaOwner: nullopt,
-                onStateReached: nullopt,
-              });
-            } else {
-              postStepsState.push({
-                ...postPreviousStepState,
-                iPlayerPaymentAreaOwner: nullopt,
-                onStateReached: nullopt,
-              });
-            }
-          } else {
-            postStepsState.push({
-              ...postPreviousStepState,
               iPlayerPaymentAreaOwner: nullopt,
               onStateReached: nullopt,
-            });
+            };
+          } else {
+            return {
+              ...previousState,
+              iPlayerPaymentAreaOwner: nullopt,
+              onStateReached: nullopt,
+            };
           }
-        });
-    }
+        } else {
+          return {
+            ...previousState,
+            iPlayerPaymentAreaOwner: nullopt,
+            onStateReached: nullopt,
+          };
+        }
+      },
 
-    const postSequenceState = {
-      ...(postStepsState.at(-1) ?? preSequenceState),
-      iPlayerPaymentAreaOwner: nullopt,
-      onStateReached: nullopt,
-    };
-
-    return [preSequenceState, postStepsState, postSequenceState];
-  })();
-  const [preAnimationStepState, postAnimationStepState] = [
-    postAnimationStepsStates[iGameAnimationStep - 1] ?? preAnimationSequenceState,
-    postAnimationStepsStates[iGameAnimationStep] ?? postAnimationSequenceState
-  ];
+      getPostSequenceState({
+        previousState,
+      }) {
+        return {
+          ...previousState,
+          iPlayerPaymentAreaOwner: nullopt,
+          onStateReached: nullopt,
+        };
+      },
+    })
+  );
 
   const rows = (() => {
     const [legalProducts, illegalProducts] =
@@ -1808,6 +1953,209 @@ type CartOfficerTools =
   )
 
 /**
+ * (React hook) Provides an interface with cart officer tools and the corresponding server update events.
+ * 
+ * Caller provides a TDragState state type to capture the current state of the tool(s) being rendered.
+ */
+function useOfficerToolDragState<TDragState>(args: {
+  propsTools: CartOfficerTools,
+  // if animationFunction options change make sure to update "calculate..." to emulate the functions
+  toolStateToDragState: (toolState: NetworkTypes.OfficerToolState) => Optional<TDragState>,
+  dragStateToToolState: (dragState: TDragState) => NetworkTypes.OfficerToolState,
+  dragStateIsOfficerControllable: (dragState: TDragState) => boolean,
+  getMouseReleaseAnimationDestState: (args: { previousState: TDragState }) => TDragState,
+  dragStatesEqual: (a: TDragState, b: TDragState) => boolean,
+  calculateDraggedState: (args: {
+    previousState: TDragState,
+    mouseDownPosition: { x: number, y: number },
+    mouseDragPosition: { x: number, y: number },
+  }) => TDragState,
+  animationFunction: "linear",
+  calculateInterruptedAnimationState: (args: { animationProgress: number, startState: TDragState, endState: TDragState }) => TDragState,
+}) {
+  const toolUpdateAnimationDurationMs = officerToolUpdateMinIntervalMs + 50;
+  const calculateInterruptedAnimationState = (funcArgs: { animationStartTimeMs: number, interruptMs: number, startState: TDragState, endState: TDragState }) => {
+    // currently only linear function permitted
+    return args.calculateInterruptedAnimationState({
+      ...funcArgs,
+      animationProgress:
+        Math.min((funcArgs.interruptMs - funcArgs.animationStartTimeMs), toolUpdateAnimationDurationMs)
+        / toolUpdateAnimationDurationMs,
+    });
+  };
+
+  const [dragData, setDragData] = React.useState<Optional<{
+    mouse:
+    | { down: false }
+    | { down: true, startPosition: { x: number, y: number } },
+    dragState: TDragState,
+    animation: Optional<{
+      animationStartTimeMs: number,
+      destDragState: TDragState,
+    }>
+  }>>(
+    args.propsTools.present == false
+      ? nullopt
+      : optMap(
+        args.toolStateToDragState(args.propsTools.state),
+        dragState => ({
+          mouse: { down: false },
+          dragState,
+          animation: nullopt,
+        })
+      )
+  );
+
+  const onMouseDownUpHandler = (funcArgs: { event: MouseEvent, downEvent: boolean }) => {
+    const controls = args.propsTools.controls;
+    if (
+      controls.localControllable == false
+      || (dragData.hasValue == true && !(args.dragStateIsOfficerControllable(dragData.value.dragState)))
+    ) {
+      return;
+    }
+
+    const eventTime = Date.now();
+    setDragData(() => {
+      if (dragData.hasValue == false) return nullopt;
+      if (dragData.value.mouse.down == funcArgs.downEvent) { // repeat event, shouldn't happen
+        return dragData;
+      }
+
+      controls.onInternalOfficerToolUpdate({
+        newToolState: args.dragStateToToolState(dragData.value.dragState),
+      });
+
+      if (funcArgs.downEvent == true) {
+        return opt({
+          mouse: { down: true, startPosition: { x: funcArgs.event.clientX, y: funcArgs.event.clientY } },
+          dragState: dragData.value.dragState,
+          animation: nullopt,
+        });
+      } else {
+        const releaseDestState = args.getMouseReleaseAnimationDestState({ previousState: dragData.value.dragState });
+        return opt({
+          mouse: { down: false },
+          dragState: dragData.value.dragState,
+          animation:
+            args.dragStatesEqual(dragData.value.dragState, releaseDestState)
+              ? nullopt
+              : opt({
+                animationStartTimeMs: eventTime,
+                destDragState: releaseDestState,
+              })
+        });
+      }
+    });
+  }
+
+  React.useEffect(() => {
+    const controls = args.propsTools.controls;
+    if (controls.localControllable == false) {
+      const { handlerRegistrationId } = controls.registerEventHandlers({
+        onExternalOfficerToolUpdate: (event) => {
+          if (dragData.hasValue == true && !(args.dragStateIsOfficerControllable(dragData.value.dragState))) {
+            return;
+          }
+
+          const eventTime = Date.now();
+          setDragData(() => {
+            const newDragStateOpt = args.toolStateToDragState(event.newToolState);
+            return optMap(newDragStateOpt,
+              newDragState => {
+                if (dragData.hasValue == false) {
+                  return {
+                    mouse: { down: false }, // arbitrary -- this won't be used since localControllable false
+                    dragState: newDragState,
+                    animation: nullopt,
+                  };
+                } else {
+                  const currentDragState = (
+                    (dragData.value.animation.hasValue == false)
+                      ? dragData.value.dragState
+                      : calculateInterruptedAnimationState({
+                        interruptMs: eventTime,
+                        animationStartTimeMs: dragData.value.animation.value.animationStartTimeMs,
+                        startState: dragData.value.dragState,
+                        endState: dragData.value.animation.value.destDragState,
+                      })
+                  );
+                  return {
+                    mouse: { down: false }, // won't be used
+                    dragState: currentDragState,
+                    animation: opt({
+                      animationStartTimeMs: eventTime,
+                      destDragState: newDragState,
+                    }),
+                  };
+                }
+              }
+            );
+          });
+        }
+      });
+      return () => { controls.unregisterEventHandlers(handlerRegistrationId); }
+
+    } else { // localControllable == true
+      const onWindowMouseUpListener = (event: MouseEvent) => { onMouseDownUpHandler({ event, downEvent: false }); };
+      const onWindowMouseMoveListener = (event: MouseEvent) => {
+        if (dragData.hasValue == true && !(args.dragStateIsOfficerControllable(dragData.value.dragState))) return;
+
+        setDragData(() => {
+          if (dragData.hasValue == false || dragData.value.mouse.down == false) return dragData;
+
+          const newDragState =
+            args.calculateDraggedState({
+              previousState: dragData.value.dragState,
+              mouseDownPosition: dragData.value.mouse.startPosition,
+              mouseDragPosition: { x: event.clientX, y: event.clientY },
+            });
+
+          controls.onInternalOfficerToolUpdate({
+            newToolState: args.dragStateToToolState(newDragState)
+          });
+
+          return opt({
+            ...dragData.value,
+            dragState: newDragState,
+            animation: nullopt,
+          });
+        })
+      };
+
+      window.addEventListener("mouseup", onWindowMouseUpListener);
+      window.addEventListener("mousemove", onWindowMouseMoveListener);
+
+      return () => {
+        window.removeEventListener("mouseup", onWindowMouseUpListener);
+        window.removeEventListener("mousemove", onWindowMouseMoveListener);
+      };
+    }
+  }, [dragData]);
+
+  return {
+    toolUpdateAnimationDurationMs,
+    dragData,
+    onToolMouseDownHandler: (event: MouseEvent) => onMouseDownUpHandler({ event, downEvent: true }),
+    onAnimationComplete: () => {
+      if (dragData.hasValue === true && dragData.value.animation.hasValue === true) {
+        const newDragState = dragData.value.animation.value.destDragState;
+        if (args.propsTools.controls.localControllable == true) {
+          args.propsTools.controls.onInternalOfficerToolUpdate({
+            newToolState: args.dragStateToToolState(newDragState),
+          });
+        }
+        setDragData(opt({
+          ...dragData.value,
+          dragState: newDragState,
+          animation: nullopt,
+        }));
+      }
+    },
+  };
+}
+
+/**
  * (Element) A trader's cart and contained crate. 
  * Crate lid is animated according to a simple animation type.
  * Animates interactable officer tools internally as needed.
@@ -1825,174 +2173,68 @@ function AnimatedCart(props: {
 
   const currentRenderTimeMs = Date.now();
 
-  const crowbarStartRotateDeg = -103;
-  const crowbarEndRotateDeg = -45;
   const crowbarDragDistanceRequired = 400;
-  const crowbarUpdateAnimationDurationMs = crowbarUpdateMinIntervalMs + 50;
-  // if function changes make sure to update "calculate..." to emulate the function
-  const crowbarUpdateAnimationFunction = "linear";
-  const calculateCrowbarAnimationProgress = (args: { animationStartTimeMs: number, nowMs: number }) => {
-    return (
-      Math.min((args.nowMs - args.animationStartTimeMs), crowbarUpdateAnimationDurationMs)
-      / crowbarUpdateAnimationDurationMs
-    )
-  };
+  const crowbarUpdateAnimationFunction = "linear" as "linear";
 
-  const dragProgressToStyleDegString = (dragProgress: number) => {
-    return `${Math.ceil(crowbarStartRotateDeg + (dragProgress * (crowbarEndRotateDeg - crowbarStartRotateDeg)))}deg`;
-  }
-
-  // nullopt if no crowbar present
-  const [crowbarData, setCrowbarData] = React.useState<Optional<
-    | {
-      mouse:
-      | { down: false }
-      | { down: true, startPosition: { x: number, y: number } },
-      dragProgress: number,
-      animation: Optional<{
-        animationStartTimeMs: number,
-        destDragProgress: number,
-      }>
-    }
-  >>(
-    props.officerTools.present == true
-      && props.officerTools.state.hasValue == true
-      && props.officerTools.state.value.tool == "crowbar"
-      ? opt({
-        mouse: { down: false },
-        dragProgress: props.officerTools.state.value.useProgress,
-        animation: nullopt
-      })
-      : nullopt
-  );
-
-  const onMouseDownUpHandler = (args: { event: MouseEvent, downEvent: boolean }) => {
-    const controls = props.officerTools.controls;
-    if (
-      controls.localControllable == false
-      || (crowbarData.hasValue == true && crowbarData.value.dragProgress >= 1)
-    ) {
-      return;
-    }
-
-    const eventTime = Date.now();
-    setCrowbarData(() => {
-      //console.log(`Mouse ${args.downEvent ? "down" : "up"} listener, current crowbar data: ${JSON.stringify(currentCrowbarDragData)}`)
-      if (crowbarData.hasValue == false) return nullopt;
-      if (crowbarData.value.mouse.down == args.downEvent) { // repeat event, shouldn't happen
-        return crowbarData;
-      }
-
-      controls.onInternalOfficerToolUpdate({
-        newToolState: opt({
-          tool: "crowbar",
-          useProgress: crowbarData.value.dragProgress,
-        }),
-      });
-
-      if (args.downEvent == true) {
-        return opt({
-          mouse: { down: true, startPosition: { x: args.event.clientX, y: args.event.clientY } },
-          dragProgress: crowbarData.value.dragProgress,
-          animation: nullopt,
-        });
-      } else {
-        return opt({
-          mouse: { down: false },
-          dragProgress: crowbarData.value.dragProgress,
-          animation: crowbarData.value.dragProgress == 0 ? nullopt : opt({
-            animationStartTimeMs: eventTime,
-            destDragProgress: 0,
+  const {
+    dragData: crowbarDragData,
+    onToolMouseDownHandler: onCrowbarMouseDownHandler,
+    toolUpdateAnimationDurationMs: crowbarUpdateAnimationDurationMs,
+    onAnimationComplete: onCrowbarAnimationComplete,
+  } = (
+      useOfficerToolDragState<number>({
+        propsTools: props.officerTools,
+        toolStateToDragState(toolStateOpt) {
+          return optBind(
+            toolStateOpt,
+            toolState =>
+              (toolState.tool === "crowbar")
+                ? opt(toolState.useProgress)
+                : nullopt,
+          );
+        },
+        dragStateToToolState(dragState) {
+          return opt({
+            tool: "crowbar",
+            useProgress: dragState,
           })
-        });
-      }
-    });
-  }
+        },
 
-  React.useEffect(() => {
-    const controls = props.officerTools.controls;
-    if (controls.localControllable == false) {
-      const { handlerRegistrationId } = controls.registerEventHandlers({
-        onExternalOfficerToolUpdate: (event) => {
-          if (crowbarData.hasValue == true && crowbarData.value.dragProgress >= 1) {
-            return;
-          }
+        dragStateIsOfficerControllable(dragState) {
+          return dragState < 1
+        },
 
-          const eventTime = Date.now();
-          setCrowbarData(() => {
-            if (event.newToolState.hasValue == false || event.newToolState.value.tool != "crowbar") return nullopt;
-            if (crowbarData.hasValue == false) return opt({
-              mouse: { down: false }, // arbitrary -- this won't be used since localControllable false
-              dragProgress: event.newToolState.value.useProgress,
-              animation: nullopt,
-            });
+        getMouseReleaseAnimationDestState(_args) { return 0 },
 
-            const currentDragProgress = (
-              (crowbarData.value.animation.hasValue == false)
-                ? crowbarData.value.dragProgress
-                : (
-                  crowbarData.value.dragProgress
-                  + (
-                    calculateCrowbarAnimationProgress({ nowMs: eventTime, animationStartTimeMs: crowbarData.value.animation.value.animationStartTimeMs })
-                    * (crowbarData.value.animation.value.destDragProgress - crowbarData.value.dragProgress)
-                  )
-                )
-            );
-            return opt({
-              mouse: { down: false }, // won't be used
-              dragProgress: currentDragProgress,
-              animation: opt({
-                animationStartTimeMs: eventTime,
-                destDragProgress: event.newToolState.value.useProgress,
-              }),
-            })
-          });
-        }
-      });
-      return () => { controls.unregisterEventHandlers(handlerRegistrationId); }
+        dragStatesEqual(a, b) {
+          return a == b;
+        },
 
-    } else { // localControllable == true
-      const onWindowMouseUpListener = (event: MouseEvent) => { onMouseDownUpHandler({ event, downEvent: false }); };
-      const onWindowMouseMoveListener = (event: MouseEvent) => {
-        if (crowbarData.hasValue == true && crowbarData.value.dragProgress >= 1) return;
-
-        setCrowbarData(() => {
-          //console.log(`Mouse move listener, current crowbar data: ${JSON.stringify(currentCrowbarDragData)}`);
-          if (crowbarData.hasValue == false || crowbarData.value.mouse.down == false) return crowbarData;
-
+        calculateDraggedState(args) {
           // translates mouse drag pixels [0,400] to crowbar drag progress [0,1] using a log function, 
           // i.e. mouse drag provides more progress at the starting range (e.g. [0,100]) than the ending
           // See on wolfram alpha: "log2(1 + (x/10)) / log2(40) from x = -20 to x = 400"
-          const newDragProgress =
+          return (
             Math.min(1, Math.max(0,
-              Math.log2(1 + ((event.clientY - crowbarData.value.mouse.startPosition.y) / 10))
+              Math.log2(1 + ((args.mouseDragPosition.y - args.mouseDownPosition.y) / 10))
               / Math.log2(crowbarDragDistanceRequired / 10)
-            ));
+            ))
+          );
+        },
 
-          controls.onInternalOfficerToolUpdate({
-            newToolState: opt({
-              tool: "crowbar",
-              useProgress: newDragProgress,
-            }),
-          });
+        animationFunction: crowbarUpdateAnimationFunction,
+        calculateInterruptedAnimationState(args) {
+          return args.animationProgress * (args.endState - args.startState);
+        },
+      })
+    );
 
-          return opt({
-            ...crowbarData.value,
-            dragProgress: newDragProgress,
-            animation: nullopt,
-          });
-        })
-      };
 
-      window.addEventListener("mouseup", onWindowMouseUpListener);
-      window.addEventListener("mousemove", onWindowMouseMoveListener);
-
-      return () => {
-        window.removeEventListener("mouseup", onWindowMouseUpListener);
-        window.removeEventListener("mousemove", onWindowMouseMoveListener);
-      };
-    }
-  }, [crowbarData])
+  const crowbarStartRotateDeg = -103;
+  const crowbarEndRotateDeg = -45;
+  const dragProgressToStyleDegString = (dragState: number) => {
+    return `${Math.ceil(crowbarStartRotateDeg + (dragState * (crowbarEndRotateDeg - crowbarStartRotateDeg)))}deg`;
+  }
 
   //console.log(`Animated Cart officer tools: ${JSON.stringify(props.officerTools)}, crowbar data: ${JSON.stringify(crowbarData)}`);
 
@@ -2053,7 +2295,7 @@ function AnimatedCart(props: {
         <img
           src={cartLidImgSrc}
           style={{
-            opacity: props.animation.hasValue == true || crowbarData.hasValue == true ? 1 : 0,
+            opacity: props.animation.hasValue == true || crowbarDragData.hasValue == true ? 1 : 0,
             position: "absolute",
             left: 0,
             top: 0,
@@ -2103,22 +2345,22 @@ function AnimatedCart(props: {
         <img
           src={crowbarImgSrc}
           draggable={false} // just prevents mouse events from being suppressed by drag events
-          onMouseDown={(event) => { onMouseDownUpHandler({ event: event.nativeEvent, downEvent: true }); }}
+          onMouseDown={(event) => { onCrowbarMouseDownHandler(event.nativeEvent); }}
           style={{
-            opacity: crowbarData.hasValue == true ? 1 : 0,
+            opacity: crowbarDragData.hasValue == true ? 1 : 0,
             position: "absolute",
             left: "52px",
             top: "2px",
             width: "50%",
             zIndex: 2,
-            rotate: (crowbarData.hasValue == true && crowbarData.value.animation.hasValue == false)
-              ? dragProgressToStyleDegString(crowbarData.value.dragProgress)
+            rotate: (crowbarDragData.hasValue == true && crowbarDragData.value.animation.hasValue == false)
+              ? dragProgressToStyleDegString(crowbarDragData.value.dragState)
               : undefined,
-            animationName: (crowbarData.hasValue == true && crowbarData.value.animation.hasValue == true)
+            animationName: (crowbarDragData.hasValue == true && crowbarDragData.value.animation.hasValue == true)
               ? (
                 `cart_crowbar_animation`
-                + `_${dragProgressToStyleDegString(crowbarData.value.dragProgress)}`
-                + `_${dragProgressToStyleDegString(crowbarData.value.animation.value.destDragProgress)}`
+                + `_${dragProgressToStyleDegString(crowbarDragData.value.dragState)}`
+                + `_${dragProgressToStyleDegString(crowbarDragData.value.animation.value.destDragState)}`
               )
               : undefined,
             animationDuration: `${crowbarUpdateAnimationDurationMs}ms`,
@@ -2127,49 +2369,29 @@ function AnimatedCart(props: {
             animationFillMode: "both",
             animationDirection: "normal",
             animationDelay: `${Math.floor(
-              (crowbarData.hasValue == false || crowbarData.value.animation.hasValue == false)
+              (crowbarDragData.hasValue == false || crowbarDragData.value.animation.hasValue == false)
                 ? 0
                 : (-Math.min( // negative delay starts animation in middle of animation
-                  (currentRenderTimeMs - crowbarData.value.animation.value.animationStartTimeMs),
+                  (currentRenderTimeMs - crowbarDragData.value.animation.value.animationStartTimeMs),
                   crowbarUpdateAnimationDurationMs
                 ))
             )}ms`,
             transformOrigin: "5% 8%",
           }}
-          onAnimationEnd={() => {
-            //console.log(`ON ANIMATION END ${JSON.stringify(crowbarData)}`);
-            setCrowbarData(() => {
-              if (crowbarData.hasValue == false || crowbarData.value.animation.hasValue == false) return crowbarData;
-
-              if (props.officerTools.controls.localControllable == true) {
-                props.officerTools.controls.onInternalOfficerToolUpdate({
-                  newToolState: opt({
-                    tool: "crowbar",
-                    useProgress: crowbarData.value.animation.value.destDragProgress,
-                  }),
-                });
-              }
-
-              return opt({
-                ...crowbarData.value,
-                dragProgress: crowbarData.value.animation.value.destDragProgress,
-                animation: nullopt,
-              });
-            });
-          }}
+          onAnimationEnd={onCrowbarAnimationComplete}
         />
 
         { // crowbar animation Keyframes
-          (crowbarData.hasValue == true && crowbarData.value.animation.hasValue == true)
+          (crowbarDragData.hasValue == true && crowbarDragData.value.animation.hasValue == true)
             ? (
               <Keyframes
                 name={
                   `cart_crowbar_animation`
-                  + `_${dragProgressToStyleDegString(crowbarData.value.dragProgress)}`
-                  + `_${dragProgressToStyleDegString(crowbarData.value.animation.value.destDragProgress)}`
+                  + `_${dragProgressToStyleDegString(crowbarDragData.value.dragState)}`
+                  + `_${dragProgressToStyleDegString(crowbarDragData.value.animation.value.destDragState)}`
                 }
-                from={{ rotate: dragProgressToStyleDegString(crowbarData.value.dragProgress) }}
-                to={{ rotate: dragProgressToStyleDegString(crowbarData.value.animation.value.destDragProgress) }}
+                from={{ rotate: dragProgressToStyleDegString(crowbarDragData.value.dragState) }}
+                to={{ rotate: dragProgressToStyleDegString(crowbarDragData.value.animation.value.destDragState) }}
               />
             )
             : undefined
@@ -2226,17 +2448,8 @@ function FloatingAnimatedCart(props: {
       ? `menu_game_trader_animated_cart_${args.iPlayerOwner === undefined ? "" : iPlayerToNum(args.iPlayerOwner)}_static_cart`
       : `menu_game_suspect_cart_animated_cart_static_cart`;
 
-  const { iGameAnimationStep /* , gameAnimationStep */ } = useGameAnimationStep(props.animation);
-
-  const [preAnimationSequenceState, postAnimationStepsStates, postAnimationSequenceState] = (() => {
-    const preSequenceState = {
-      location: props.location,
-      crateState: props.contents.state == "open crate" ? "lid opened" as "lid opened" : "lid closed" as "lid closed",
-      crateContents: { state: "none" as "none" },
-      onStateReached: nullopt,
-    };
-
-    const postStepsStates: {
+  const { preAnimationStepState, postAnimationStepState } = (
+    useGameAnimationStates<{
       location: "Trader Supplies" | "Suspect Cart Area",
       crateState: "lid blasted" | "lid opened" | "lid closed",
       crateContents:
@@ -2244,74 +2457,69 @@ function FloatingAnimatedCart(props: {
       | { state: "displayed", products: ProductType[], iProductCheekyDelay: Optional<number> }
       | { state: "arrived", products: ProductType[], destinations: CrateProductDestination[], illegalsHidden: boolean }
       onStateReached: Optional<() => void>,
-    }[] = [];
+    }>({
+      animation: props.animation,
+      propsState: {
+        location: props.location,
+        crateState: props.contents.state == "open crate" ? "lid opened" : "lid closed",
+        crateContents: { state: "none" },
+        onStateReached: nullopt,
+      },
 
-    if (props.animation.hasValue == true) {
-      (props.animation.value.sequence
-        .zip(props.animation.value.onCompleteRegistrations) ?? [])
-        .forEach(([s, onCompleteRegistration]) => {
-          const postPreviousStepState = postStepsStates.at(-1) ?? preSequenceState;
+      getPostStepState({
+        step,
+        callAllOnCompletes,
+        previousState,
+      }) {
+        if (step.type == "cart motion" && iPlayerToNum(step.iPlayerCart) == iPlayerToNum(props.iPlayerOwner)) {
+          return {
+            ...previousState,
+            location: step.motion == "suspect area to trader supplies" ? "Trader Supplies" : "Suspect Cart Area",
+            onStateReached: opt(callAllOnCompletes),
+          };
 
-          if (s.type == "cart motion" && iPlayerToNum(s.iPlayerCart) == iPlayerToNum(props.iPlayerOwner)) {
-            postStepsStates.push({
-              ...postPreviousStepState,
-              location: s.motion == "suspect area to trader supplies" ? "Trader Supplies" : "Suspect Cart Area",
-              onStateReached: opt(() => {
-                //console.log(`Floating Animated cart ${props.location} ${props.iPlayerOwner} calling back ${onCompleteRegistration.length} onCompleteRegistrations`);
-                onCompleteRegistration.forEach(c => c());
-              }),
-            });
+        } else if (step.type == "crate" && iPlayerToNum(step.iPlayerCrate) == iPlayerToNum(props.iPlayerOwner)) {
+          return {
+            ...previousState,
+            crateState: step.animation == "blast lid" ? "lid blasted" : step.animation == "open lid" ? "lid opened" : "lid closed",
+            onStateReached: opt(callAllOnCompletes)
+          };
 
-          } else if (s.type == "crate" && iPlayerToNum(s.iPlayerCrate) == iPlayerToNum(props.iPlayerOwner)) {
-            postStepsStates.push({
-              ...postPreviousStepState,
-              crateState: s.animation == "blast lid" ? "lid blasted" : s.animation == "open lid" ? "lid opened" : "lid closed",
-              onStateReached: opt(() => {
-                //console.log(`Floating Animated cart ${props.location} ${props.iPlayerOwner} calling back ${onCompleteRegistration.length} onCompleteRegistrations`);
-                onCompleteRegistration.forEach(c => c());
-              })
-            });
+        } else if (step.type == "crate contents" && iPlayerToNum(step.iPlayerCrate) == iPlayerToNum(props.iPlayerOwner)) {
+          return {
+            ...previousState,
+            crateContents: {
+              products: step.animation.contents.map(p => p.product),
+              ...((step.animation.animation == "display contents")
+                ? { state: "displayed", iProductCheekyDelay: step.animation.iProductCheekyDelay }
+                : {
+                  state: "arrived",
+                  destinations: step.animation.contents.map(p => p.destination),
+                  illegalsHidden: step.animation.illegalsHidden,
+                }
+              )
+            },
+            onStateReached: opt(callAllOnCompletes)
+          };
 
-          } else if (s.type == "crate contents" && iPlayerToNum(s.iPlayerCrate) == iPlayerToNum(props.iPlayerOwner)) {
-            postStepsStates.push({
-              ...postPreviousStepState,
-              crateContents: {
-                products: s.animation.contents.map(p => p.product),
-                ...((s.animation.animation == "display contents")
-                  ? { state: "displayed", iProductCheekyDelay: s.animation.iProductCheekyDelay }
-                  : {
-                    state: "arrived",
-                    destinations: s.animation.contents.map(p => p.destination),
-                    illegalsHidden: s.animation.illegalsHidden,
-                  }
-                )
-              },
-              onStateReached: opt(() => {
-                //console.log(`Floating Animated cart ${props.location} ${props.iPlayerOwner} calling back ${onCompleteRegistration.length} onCompleteRegistrations`);
-                onCompleteRegistration.forEach(c => c());
-              })
-            });
+        } else {
+          return {
+            ...previousState,
+            onStateReached: nullopt,
+          };
+        }
+      },
 
-          } else {
-            postStepsStates.push({
-              ...postPreviousStepState,
-              onStateReached: nullopt,
-            });
-          }
-        });
-    }
-
-    const postSequenceState = {
-      ...(postStepsStates.at(-1) ?? preSequenceState),
-      onStateReached: nullopt,
-    };
-
-    return [preSequenceState, postStepsStates, postSequenceState];
-  })();
-  const [preAnimationStepState, postAnimationStepState] = [
-    postAnimationStepsStates[iGameAnimationStep - 1] ?? preAnimationSequenceState,
-    postAnimationStepsStates[iGameAnimationStep] ?? postAnimationSequenceState
-  ];
+      getPostSequenceState({
+        previousState,
+      }) {
+        return {
+          ...previousState,
+          onStateReached: nullopt,
+        };
+      },
+    })
+  );
 
   return (
     <div {...attrs} style={{ marginTop: props.location == "Suspect Cart Area" ? "70px" : "0px", marginLeft: "30px", marginRight: "30px", ...(attrs['style'] ?? {}) }}>
@@ -2662,6 +2870,7 @@ export default function MenuGame(props: MenuGameProps) {
     }
     return { state: "Setup" };
   });
+
   //console.log(JSON.stringify(clientGameState));
 
   const serverGameState: ServerGameState = (() => {
@@ -2690,6 +2899,7 @@ export default function MenuGame(props: MenuGameProps) {
           round: clientGameState.round,
           communityPools: clientGameState.communityPools,
           traderSupplies: clientGameState.traderSupplies,
+          counters: clientGameState.counters,
           iPlayerOfficer: clientGameState.localOfficer == true ? iPlayerLocal : clientGameState.iPlayerOfficer,
           cartStates: (
             clientGameState.otherCartStates.shallowCopy()
@@ -2706,6 +2916,7 @@ export default function MenuGame(props: MenuGameProps) {
           round: clientGameState.round,
           communityPools: clientGameState.communityPools,
           traderSupplies: clientGameState.traderSupplies,
+          counters: clientGameState.counters,
           iPlayerOfficer: clientGameState.localOfficer == true ? iPlayerLocal : clientGameState.iPlayerOfficer,
           cartStates: clientGameState.cartStates,
           iPlayerActiveTrader: clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader,
@@ -2717,6 +2928,7 @@ export default function MenuGame(props: MenuGameProps) {
           round: clientGameState.round,
           communityPools: clientGameState.communityPools,
           traderSupplies: clientGameState.traderSupplies,
+          counters: clientGameState.counters,
           iPlayerOfficer: clientGameState.localOfficer == true ? iPlayerLocal : clientGameState.iPlayerOfficer,
           cartStates: clientGameState.cartStates,
           ...((clientGameState.customsState == "ready")
@@ -2725,11 +2937,20 @@ export default function MenuGame(props: MenuGameProps) {
               ? {
                 customsState: "resolving",
                 iPlayerActiveTrader: clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader,
-                ...((clientGameState.result.result == "ignored for deal")
-                  ? { result: "ignored for deal", deal: clientGameState.result.deal }
-                  : (clientGameState.result.result == "searched")
-                    ? { result: "searched", iProductCheekyDelay: clientGameState.result.iProductCheekyDelay }
-                    : { result: "ignored" }
+                result: (
+                  (clientGameState.result.result == "ignored for deal")
+                    ? {
+                      result: "ignored for deal",
+                      deal: clientGameState.result.deal,
+                      resultState: clientGameState.result.resultState,
+                    }
+                    : (clientGameState.result.result == "searched")
+                      ? {
+                        result: "searched",
+                        iProductCheekyDelay: clientGameState.result.iProductCheekyDelay,
+                        resultState: clientGameState.result.resultState,
+                      }
+                      : { result: "ignored", resultState: clientGameState.result.resultState }
                 )
               }
               : {
@@ -2747,6 +2968,7 @@ export default function MenuGame(props: MenuGameProps) {
           round: clientGameState.round,
           communityPools: clientGameState.communityPools,
           traderSupplies: clientGameState.traderSupplies,
+          counters: clientGameState.counters,
           iPlayerOfficer: clientGameState.localOfficer == true ? iPlayerLocal : clientGameState.iPlayerOfficer,
         };
 
@@ -2836,6 +3058,7 @@ export default function MenuGame(props: MenuGameProps) {
                 round: event.data.state.round,
                 communityPools: event.data.state.communityPools,
                 traderSupplies: eventTraderSupplies.value,
+                counters: event.data.state.counters,
                 otherCartStates: eventCartStates.value,
                 ...(
                   (iPlayerToNum(iPlayerLocal) == iPlayerToNum(eventIPlayerOfficer.value))
@@ -2896,6 +3119,7 @@ export default function MenuGame(props: MenuGameProps) {
                 round: event.data.state.round,
                 communityPools: event.data.state.communityPools,
                 traderSupplies: eventTraderSupplies.value,
+                counters: event.data.state.counters,
                 otherCartStates: eventCartStates.value,
                 otherTradersSwapping: eventModeSpecificData.value.tradersSwapping.shallowCopy(),
                 ...(
@@ -2963,6 +3187,7 @@ export default function MenuGame(props: MenuGameProps) {
               round: event.data.state.round,
               communityPools: event.data.state.communityPools,
               traderSupplies: eventTraderSupplies.value,
+              counters: event.data.state.counters,
               cartStates: eventCartStates.value,
               ...((iPlayerToNum(iPlayerLocal) == iPlayerToNum(eventIPlayerOfficer.value))
                 ? { localOfficer: true, localActiveTrader: false, iPlayerActiveTrader: eventIPlayerActiveTrader.value }
@@ -3019,6 +3244,7 @@ export default function MenuGame(props: MenuGameProps) {
               round: event.data.state.round,
               communityPools: event.data.state.communityPools,
               traderSupplies: eventTraderSupplies.value,
+              counters: event.data.state.counters,
               cartStates: eventCartStates.value,
               ...(() => {
                 switch (event.data.state.customsState) {
@@ -3097,11 +3323,7 @@ export default function MenuGame(props: MenuGameProps) {
                         }
                       ),
                       wipTraderSupplies: eventTraderSupplies.value.shallowCopy(),
-                      result: (event.data.state.result == "ignored for deal")
-                        ? { result: "ignored for deal", deal: event.data.state.deal }
-                        : (event.data.state.result == "searched")
-                          ? { result: "searched", iProductCheekyDelay: event.data.state.iProductCheekyDelay }
-                          : { result: "ignored" }
+                      result: event.data.state.result,
                     };
                 }
               })()
@@ -3129,6 +3351,7 @@ export default function MenuGame(props: MenuGameProps) {
               round: event.data.state.round,
               communityPools: event.data.state.communityPools,
               traderSupplies: eventTraderSupplies.value,
+              counters: event.data.state.counters,
               ...((iPlayerToNum(iPlayerLocal) == iPlayerToNum(eventIPlayerOfficer.value))
                 ? { localOfficer: true }
                 : { localOfficer: false, iPlayerOfficer: eventIPlayerOfficer.value }
@@ -3247,6 +3470,7 @@ export default function MenuGame(props: MenuGameProps) {
               round: serverGameState.round,
               communityPools: newPools,
               traderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+              counters: serverGameState.counters,
               iPlayerOfficer: serverGameState.iPlayerOfficer.value,
               cartStates: serverGameState.cartStates.arr,
             });
@@ -3327,6 +3551,7 @@ export default function MenuGame(props: MenuGameProps) {
                 round: serverGameState.round,
                 communityPools: serverGameState.communityPools,
                 traderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+                counters: serverGameState.counters,
                 iPlayerOfficer: serverGameState.iPlayerOfficer.value,
                 iPlayerActiveTrader: props.clients.incrementIndexModLength(serverGameState.iPlayerOfficer, 1).value,
                 cartStates: nextStateCartStatesOpt.value.arr
@@ -3341,6 +3566,7 @@ export default function MenuGame(props: MenuGameProps) {
                 round: serverGameState.round,
                 communityPools: serverGameState.communityPools,
                 traderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+                counters: serverGameState.counters,
                 iPlayerOfficer: serverGameState.iPlayerOfficer.value,
                 cartStates: newCartStates.arr
               });
@@ -3377,6 +3603,7 @@ export default function MenuGame(props: MenuGameProps) {
                 round: serverGameState.round,
                 communityPools: serverGameState.communityPools,
                 traderSupplies: serverGameState.traderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+                counters: serverGameState.counters,
                 iPlayerOfficer: serverGameState.iPlayerOfficer.value,
                 cartStates: serverGameState.cartStates.arr,
                 customsState: "ready",
@@ -3387,6 +3614,7 @@ export default function MenuGame(props: MenuGameProps) {
                 round: serverGameState.round,
                 communityPools: serverGameState.communityPools,
                 traderSupplies: serverGameState.traderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+                counters: serverGameState.counters,
                 iPlayerOfficer: serverGameState.iPlayerOfficer.value,
                 iPlayerActiveTrader: iPlayerNext.value,
                 cartStates: serverGameState.cartStates.arr,
@@ -3424,7 +3652,11 @@ export default function MenuGame(props: MenuGameProps) {
         if (
           serverGameState.state == "Customs"
           && (
-            (iPlayerToNum(serverGameState.iPlayerOfficer) == iPlayerToNum(iPlayerEvent) && event.data.action.action != "resolve completed")
+            (
+              iPlayerToNum(serverGameState.iPlayerOfficer) == iPlayerToNum(iPlayerEvent)
+              && event.data.action.action != "resolve confirmation ready"
+              && event.data.action.action != "resolve completed"
+            )
             || (
               serverGameState.customsState == "interrogating"
               && iPlayerToNum(serverGameState.iPlayerActiveTrader) == iPlayerToNum(iPlayerEvent)
@@ -3438,12 +3670,18 @@ export default function MenuGame(props: MenuGameProps) {
             )
             || (
               serverGameState.customsState == "resolving"
-              && event.data.action.action == "resolve completed"
+              && (event.data.action.action === "resolve confirmation ready" || event.data.action.action == "resolve completed")
               && (iPlayerToNum(iPlayerEvent) == iPlayerToNum(iPlayerLocal) && props.hostInfo.localHost == true)
             )
           )
         ) {
-          if (serverGameState.customsState == "interrogating" && event.data.action.action == "officer tool update") {
+          if (
+            event.data.action.action == "officer tool update"
+            && (
+              serverGameState.customsState == "interrogating"
+              || (serverGameState.customsState === "resolving" && serverGameState.result.resultState.resultState === "confirming")
+            )
+          ) {
             props.ws.ws.send(`MSG|${props.clients.arr.filter(x => x.clientId != props.localInfo.clientId).map(x => x.clientId).join(",")}`
               + `|${NetworkTypes.ServerEventType.OFFICER_TOOL_UPDATE}|${JSON.stringify(event.data.action.update satisfies NetworkTypes.ServerOfficerToolUpdateEventData)}`
             );
@@ -3473,6 +3711,7 @@ export default function MenuGame(props: MenuGameProps) {
                 round: serverGameState.round,
                 communityPools: serverGameState.communityPools,
                 traderSupplies: serverGameState.traderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+                counters: serverGameState.counters,
                 iPlayerOfficer: serverGameState.iPlayerOfficer.value,
                 cartStates: serverGameState.cartStates.arr,
                 customsState: "interrogating",
@@ -3489,6 +3728,7 @@ export default function MenuGame(props: MenuGameProps) {
                   round: serverGameState.round,
                   communityPools: serverGameState.communityPools,
                   traderSupplies: serverGameState.traderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+                  counters: serverGameState.counters,
                   iPlayerOfficer: serverGameState.iPlayerOfficer.value,
                   cartStates: serverGameState.cartStates.arr,
                   customsState: "ready"
@@ -3520,6 +3760,7 @@ export default function MenuGame(props: MenuGameProps) {
                   return opt({
                     ...serverGameState,
                     traderSupplies: serverGameState.traderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+                    counters: serverGameState.counters,
                     iPlayerOfficer: serverGameState.iPlayerOfficer.value,
                     iPlayerActiveTrader: serverGameState.iPlayerActiveTrader.value,
                     cartStates: serverGameState.cartStates.arr,
@@ -3532,154 +3773,209 @@ export default function MenuGame(props: MenuGameProps) {
                   round: serverGameState.round,
                   communityPools: serverGameState.communityPools,
                   traderSupplies: serverGameState.traderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+                  counters: {
+                    ...serverGameState.counters,
+                    ...(
+                      (event.data.action.action === "search cart")
+                        ? { incidentReport: serverGameState.counters.incidentReport + 1 }
+                        : { entryVisa: serverGameState.counters.entryVisa + 1 }
+                    )
+                  },
                   iPlayerOfficer: serverGameState.iPlayerOfficer.value,
                   cartStates: serverGameState.cartStates.arr,
                   customsState: "resolving",
                   iPlayerActiveTrader: serverGameState.iPlayerActiveTrader.value,
-                  ...((event.data.action.action == "accept deal")
-                    ? {
-                      result: "ignored for deal",
-                      deal: (serverGameState.proposedDeal.hasValue == false)// TODO fix, this is proven false
-                        ? handleUnexpectedState() as IgnoreDeal
-                        : serverGameState.proposedDeal.value
-                    }
-                    : (event.data.action.action == "search cart")
+                  result: (
+                    (event.data.action.action == "accept deal")
                       ? {
-                        result: "searched", iProductCheekyDelay: (() => {
-                          const activeTraderCartState = serverGameState.cartStates.get(serverGameState.iPlayerActiveTrader);
-                          if (activeTraderCartState.packed == true) {
-                            const numAccuratelyClaimedProducts = activeTraderCartState.cart.products.filter(p => p == activeTraderCartState.cart.claimedType).length;
-                            if (numAccuratelyClaimedProducts >= 3 && activeTraderCartState.cart.count >= 4) {
-                              const chance = 0.2;
-                              if (Math.random() < chance) {
-                                if (numAccuratelyClaimedProducts != activeTraderCartState.cart.count) {
-                                  return opt(numAccuratelyClaimedProducts);
-                                } else {
-                                  return opt(Math.floor(Math.random() * (numAccuratelyClaimedProducts - 3)) + 3);
+                        result: "ignored for deal",
+                        deal: (serverGameState.proposedDeal.hasValue == false)// TODO fix, this is proven false
+                          ? handleUnexpectedState() as IgnoreDeal
+                          : serverGameState.proposedDeal.value,
+                        resultState: { resultState: "paying" },
+                      }
+                      : (event.data.action.action == "search cart")
+                        ? {
+                          result: "searched",
+                          iProductCheekyDelay: (() => {
+                            const activeTraderCartState = serverGameState.cartStates.get(serverGameState.iPlayerActiveTrader);
+                            if (activeTraderCartState.packed == true) {
+                              const numAccuratelyClaimedProducts = activeTraderCartState.cart.products.filter(p => p == activeTraderCartState.cart.claimedType).length;
+                              if (numAccuratelyClaimedProducts >= 3 && activeTraderCartState.cart.count >= 4) {
+                                const chance = 0.2;
+                                if (Math.random() < chance) {
+                                  if (numAccuratelyClaimedProducts != activeTraderCartState.cart.count) {
+                                    return opt(numAccuratelyClaimedProducts);
+                                  } else {
+                                    return opt(Math.floor(Math.random() * (numAccuratelyClaimedProducts - 3)) + 3);
+                                  }
                                 }
                               }
                             }
-                          }
-                          return nullopt;
-                        })()
-                      }
-                      : { result: "ignored" }
+                            return nullopt;
+                          })(),
+                          resultState: { resultState: "searching" },
+                        }
+                        : { result: "ignored", resultState: { resultState: "continuing" } }
                   )
                 })
               }
             } else { // "resolving"
               const suspectCartState = serverGameState.cartStates.get(serverGameState.iPlayerActiveTrader);
-              if (suspectCartState.packed == false || event.data.action.action != "resolve completed") {
+              if (
+                suspectCartState.packed == false
+                || !(
+                  (
+                    event.data.action.action === "resolve confirmation ready"
+                    && (serverGameState.result.resultState.resultState === "paying" || serverGameState.result.resultState.resultState === "searching")
+                  )
+                  || (
+                    event.data.action.action === "confirm resolve"
+                    && serverGameState.result.resultState.resultState === "confirming"
+                  )
+                  || (
+                    event.data.action.action === "resolve completed"
+                    && serverGameState.result.resultState.resultState === "continuing"
+                  )
+                )
+              ) {
                 handleUnexpectedState();
                 return nullopt;
               }
 
-              const newPools: CommunityContractPools = {
-                generalPoolContractCounts: serverGameState.communityPools.generalPoolContractCounts.shallowCopy(),
-                recyclePoolsContracts: [serverGameState.communityPools.recyclePoolsContracts[0]?.shallowCopy() ?? []].concat(serverGameState.communityPools.recyclePoolsContracts.skip(1))
-              };
-              let newTraderSupplies = serverGameState.traderSupplies.shallowCopy();
-              newTraderSupplies.set(serverGameState.iPlayerActiveTrader, {
-                ...newTraderSupplies.get(serverGameState.iPlayerActiveTrader),
-                shopProductCounts: newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.shallowCopy()
-              });
-              newTraderSupplies.set(serverGameState.iPlayerOfficer, {
-                ...newTraderSupplies.get(serverGameState.iPlayerOfficer)
-              });
-              if (serverGameState.result == "ignored" || serverGameState.result == "ignored for deal") {
-                suspectCartState.cart.products.forEach(p => {
-                  newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.set(p, newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.get(p) + 1);
-                });
-                if (serverGameState.result == "ignored for deal") {
-                  // execute deal
-                  newTraderSupplies.get(serverGameState.iPlayerActiveTrader).money += serverGameState.deal.officerGives.money;
-                  newTraderSupplies.get(serverGameState.iPlayerActiveTrader).money -= serverGameState.deal.traderGives.money;
-                  newTraderSupplies.get(serverGameState.iPlayerOfficer).money += serverGameState.deal.traderGives.money;
-                  newTraderSupplies.get(serverGameState.iPlayerOfficer).money -= serverGameState.deal.officerGives.money;
-                }
-              } else { // "searched"
-                if (suspectCartState.cart.products.every(p => p == suspectCartState.cart.claimedType)) {
-                  // officer pays
-                  const finePaid = Math.min(
-                    newTraderSupplies.get(serverGameState.iPlayerOfficer).money,
-                    suspectCartState.cart.products.map(p => getProductInfo(p).fine as number).reduce((a, b) => a + b, 0)
-                  );
-                  newTraderSupplies.get(serverGameState.iPlayerOfficer).money -= finePaid;
-                  newTraderSupplies.get(serverGameState.iPlayerActiveTrader).money += finePaid;
-                  suspectCartState.cart.products.forEach(p => {
-                    newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.set(p, newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.get(p) + 1);
-                  });
-                } else {
-                  // trader pays
-                  const finePaid = Math.min(
-                    newTraderSupplies.get(serverGameState.iPlayerActiveTrader).money,
-                    suspectCartState.cart.products
-                      .filter(p => p != suspectCartState.cart.claimedType)
-                      .map(p => getProductInfo(p).fine as number)
-                      .reduce((a, b) => a + b, 0)
-                  );
-                  newTraderSupplies.get(serverGameState.iPlayerActiveTrader).money -= finePaid;
-                  newTraderSupplies.get(serverGameState.iPlayerOfficer).money += finePaid;
-                  newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.set(suspectCartState.cart.claimedType,
-                    newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.get(suspectCartState.cart.claimedType)
-                    + suspectCartState.cart.products
-                      .filter(p => p == suspectCartState.cart.claimedType)
-                      .length
-                  );
-                  (newPools.recyclePoolsContracts[0] ?? []).push(
-                    ...suspectCartState.cart.products
-                      .filter(p => p != suspectCartState.cart.claimedType)
-                  );
-                }
-              }
-
-              if (serverGameState.cartStates.arr.filter(c => c.packed == true).length == 1) {
-                // this was the last cart
-
-                // refresh ready pools
-                newTraderSupplies = newTraderSupplies.map(s => {
-                  return {
-                    ...s,
-                    readyPool: s.readyPool.shallowCopy()
-                  };
-                });
-                newTraderSupplies.arr.forEach(s => {
-                  s.readyPool.push(...takeContractsFromGeneralPool(props.settings, newPools, readyPoolSize - s.readyPool.length));
-                });
-
-                // check for end of game
-                const newRound = serverGameState.round + 1;
-                if (newRound >= props.settings.numRounds) {
-                  return opt({
-                    state: "GameEnd",
-                    finalTraderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr }))
-                  });
-                } else {
-                  return opt({
-                    ...(
-                      (props.settings.swapMode === "strategic")
-                        ? { state: "StrategicSwapPack", iPlayerActiveSwapTrader: opt(props.clients.incrementIndexModLength(serverGameState.iPlayerOfficer, 2).value), }
-                        : { state: "SimpleSwapPack", tradersSwapping: props.clients.map((_c, i) => iPlayerToNum(i) === iPlayerToNum(props.clients.incrementIndexModLength(serverGameState.iPlayerOfficer, 1)) ? false : true).arr }
-                    ),
-                    round: newRound,
-                    communityPools: newPools,
-                    traderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
-                    iPlayerOfficer: props.clients.incrementIndexModLength(serverGameState.iPlayerOfficer, 1).value,
-                    cartStates: props.clients.map(() => { return { "packed": false as false }; }).arr,
-                  });
-                }
-              } else {
-                const newCartStates = serverGameState.cartStates.shallowCopy();
-                newCartStates.set(serverGameState.iPlayerActiveTrader, { "packed": false });
+              if (event.data.action.action === "resolve confirmation ready" || event.data.action.action === "confirm resolve") {
                 return opt({
                   state: "Customs",
                   round: serverGameState.round,
-                  communityPools: newPools,
-                  traderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+                  communityPools: serverGameState.communityPools,
+                  traderSupplies: serverGameState.traderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+                  counters: serverGameState.counters,
                   iPlayerOfficer: serverGameState.iPlayerOfficer.value,
-                  cartStates: newCartStates.arr,
-                  customsState: "ready"
+                  cartStates: serverGameState.cartStates.arr,
+                  customsState: "resolving",
+                  iPlayerActiveTrader: serverGameState.iPlayerActiveTrader.value,
+                  result: (
+                    (serverGameState.result.result !== "ignored")
+                      ? {
+                        ...serverGameState.result,
+                        resultState:
+                          (event.data.action.action === "resolve confirmation ready")
+                            ? { resultState: "confirming" }
+                            : { resultState: "continuing", entryVisaStamps: event.data.action.entryVisaStamps },
+                      }
+                      : serverGameState.result // TODO should be impossible by above if statement
+                  ),
                 });
+              } else { // "resolve completed"
+                const newPools: CommunityContractPools = {
+                  generalPoolContractCounts: serverGameState.communityPools.generalPoolContractCounts.shallowCopy(),
+                  recyclePoolsContracts: [serverGameState.communityPools.recyclePoolsContracts[0]?.shallowCopy() ?? []].concat(serverGameState.communityPools.recyclePoolsContracts.skip(1))
+                };
+                let newTraderSupplies = serverGameState.traderSupplies.shallowCopy();
+                newTraderSupplies.set(serverGameState.iPlayerActiveTrader, {
+                  ...newTraderSupplies.get(serverGameState.iPlayerActiveTrader),
+                  shopProductCounts: newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.shallowCopy()
+                });
+                newTraderSupplies.set(serverGameState.iPlayerOfficer, {
+                  ...newTraderSupplies.get(serverGameState.iPlayerOfficer)
+                });
+                if (serverGameState.result.result == "ignored" || serverGameState.result.result == "ignored for deal") {
+                  suspectCartState.cart.products.forEach(p => {
+                    newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.set(p, newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.get(p) + 1);
+                  });
+                  if (serverGameState.result.result == "ignored for deal") {
+                    // execute deal
+                    newTraderSupplies.get(serverGameState.iPlayerActiveTrader).money += serverGameState.result.deal.officerGives.money;
+                    newTraderSupplies.get(serverGameState.iPlayerActiveTrader).money -= serverGameState.result.deal.traderGives.money;
+                    newTraderSupplies.get(serverGameState.iPlayerOfficer).money += serverGameState.result.deal.traderGives.money;
+                    newTraderSupplies.get(serverGameState.iPlayerOfficer).money -= serverGameState.result.deal.officerGives.money;
+                  }
+                } else { // "searched"
+                  if (suspectCartState.cart.products.every(p => p == suspectCartState.cart.claimedType)) {
+                    // officer pays
+                    const finePaid = Math.min(
+                      newTraderSupplies.get(serverGameState.iPlayerOfficer).money,
+                      suspectCartState.cart.products.map(p => getProductInfo(p).fine as number).reduce((a, b) => a + b, 0)
+                    );
+                    newTraderSupplies.get(serverGameState.iPlayerOfficer).money -= finePaid;
+                    newTraderSupplies.get(serverGameState.iPlayerActiveTrader).money += finePaid;
+                    suspectCartState.cart.products.forEach(p => {
+                      newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.set(p, newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.get(p) + 1);
+                    });
+                  } else {
+                    // trader pays
+                    const finePaid = Math.min(
+                      newTraderSupplies.get(serverGameState.iPlayerActiveTrader).money,
+                      suspectCartState.cart.products
+                        .filter(p => p != suspectCartState.cart.claimedType)
+                        .map(p => getProductInfo(p).fine as number)
+                        .reduce((a, b) => a + b, 0)
+                    );
+                    newTraderSupplies.get(serverGameState.iPlayerActiveTrader).money -= finePaid;
+                    newTraderSupplies.get(serverGameState.iPlayerOfficer).money += finePaid;
+                    newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.set(suspectCartState.cart.claimedType,
+                      newTraderSupplies.get(serverGameState.iPlayerActiveTrader).shopProductCounts.get(suspectCartState.cart.claimedType)
+                      + suspectCartState.cart.products
+                        .filter(p => p == suspectCartState.cart.claimedType)
+                        .length
+                    );
+                    (newPools.recyclePoolsContracts[0] ?? []).push(
+                      ...suspectCartState.cart.products
+                        .filter(p => p != suspectCartState.cart.claimedType)
+                    );
+                  }
+                }
+
+                if (serverGameState.cartStates.arr.filter(c => c.packed == true).length == 1) {
+                  // this was the last cart
+
+                  // refresh ready pools
+                  newTraderSupplies = newTraderSupplies.map(s => {
+                    return {
+                      ...s,
+                      readyPool: s.readyPool.shallowCopy()
+                    };
+                  });
+                  newTraderSupplies.arr.forEach(s => {
+                    s.readyPool.push(...takeContractsFromGeneralPool(props.settings, newPools, readyPoolSize - s.readyPool.length));
+                  });
+
+                  // check for end of game
+                  const newRound = serverGameState.round + 1;
+                  if (newRound >= props.settings.numRounds) {
+                    return opt({
+                      state: "GameEnd",
+                      finalTraderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr }))
+                    });
+                  } else {
+                    return opt({
+                      ...(
+                        (props.settings.swapMode === "strategic")
+                          ? { state: "StrategicSwapPack", iPlayerActiveSwapTrader: opt(props.clients.incrementIndexModLength(serverGameState.iPlayerOfficer, 2).value), }
+                          : { state: "SimpleSwapPack", tradersSwapping: props.clients.map((_c, i) => iPlayerToNum(i) === iPlayerToNum(props.clients.incrementIndexModLength(serverGameState.iPlayerOfficer, 1)) ? false : true).arr }
+                      ),
+                      round: newRound,
+                      communityPools: newPools,
+                      traderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+                      counters: serverGameState.counters,
+                      iPlayerOfficer: props.clients.incrementIndexModLength(serverGameState.iPlayerOfficer, 1).value,
+                      cartStates: props.clients.map(() => { return { "packed": false as false }; }).arr,
+                    });
+                  }
+                } else {
+                  const newCartStates = serverGameState.cartStates.shallowCopy();
+                  newCartStates.set(serverGameState.iPlayerActiveTrader, { "packed": false });
+                  return opt({
+                    state: "Customs",
+                    round: serverGameState.round,
+                    communityPools: newPools,
+                    traderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+                    counters: serverGameState.counters,
+                    iPlayerOfficer: serverGameState.iPlayerOfficer.value,
+                    cartStates: newCartStates.arr,
+                    customsState: "ready"
+                  });
+                }
               }
             }
           })();
@@ -3768,6 +4064,7 @@ export default function MenuGame(props: MenuGameProps) {
         ), round: 0,
         communityPools: persistentGameState.communityPools,
         traderSupplies: persistentGameState.traderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+        counters: persistentGameState.counters,
         iPlayerOfficer: iPlayerOfficer.value,
         cartStates: props.clients.map(() => { return { "packed": false as false }; }).arr,
       };
@@ -3787,6 +4084,8 @@ export default function MenuGame(props: MenuGameProps) {
       timeoutsToClearOnStateChange.forEach(t => clearTimeout(t));
     };
   })
+
+  const previousAnimationSequenceRef = React.useRef<Optional<GameAnimationStep[]>>(nullopt);
 
   if (clientGameState.state == "Setup") {
     return (<div>Waiting for game to start<AnimatedEllipses /></div>);
@@ -3953,10 +4252,10 @@ export default function MenuGame(props: MenuGameProps) {
     clientGameState.state == "Customs" && clientGameState.customsState == "resolving"
       ? clientGameState.wipTraderSupplies
       : clientGameState.traderSupplies;
-  console.log(currentTraderSupplies);
+  //console.log(currentTraderSupplies);
 
   const animation: Optional<GameAnimationSequence> = (() => {
-    const animationSequence = ((): Optional<{ sequence: GameAnimationStep[], onComplete: () => void }> => {
+    const animationSequence = ((): Optional<{ sequence: GameAnimationStep[], onComplete: () => void, persistToNextGameState: boolean }> => {
       switch (clientGameState.state) {
         case "StrategicSwapPack":
         case "SimpleSwapPack":
@@ -4004,10 +4303,15 @@ export default function MenuGame(props: MenuGameProps) {
                   ...clientGameState,
                   introState: "ready",
                 });
-              }
+              },
+              persistToNextGameState: true,
             });
-          } else {
-            return nullopt;
+          } else { // ready
+            return opt({
+              sequence: [],
+              onComplete: () => { },
+              persistToNextGameState: false,
+            });
           }
         }
         case "Customs": {
@@ -4031,7 +4335,8 @@ export default function MenuGame(props: MenuGameProps) {
                       ...clientGameState,
                       readyState: { state: "ready" },
                     });
-                  }
+                  },
+                  persistToNextGameState: false,
                 })
               } else {
                 return nullopt;
@@ -4056,229 +4361,263 @@ export default function MenuGame(props: MenuGameProps) {
                       ...clientGameState,
                       interrogatingState: "ready",
                     })
-                  }
+                  },
+                  persistToNextGameState: false,
                 })
               } else {
                 return nullopt;
               }
             }
             case "resolving": {
-              return opt({
-                onComplete: () => {
-                  if (props.hostInfo.localHost) {
-                    clientSendClientEventToServer({
-                      type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
-                      data: {
-                        sourceClientId: props.localInfo.clientId,
-                        action: {
-                          action: "resolve completed"
-                        },
+              switch (clientGameState.result.resultState.resultState) {
+                case "searching":
+                case "paying": {
+                  return opt({
+                    sequence: ((): GameAnimationStep[] => {
+                      const iPlayerActiveTrader = clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader;
+                      const activePlayerCartState = clientGameState.cartStates.get(iPlayerActiveTrader);
+                      if (activePlayerCartState.packed == false) {
+                        // TODO fix not supposed to happen
+                        return [];
                       }
-                    });
-                  }
-                },
-                sequence: ((): GameAnimationStep[] => {
-                  const iPlayerActiveTrader = clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader;
-                  const activePlayerCartState = clientGameState.cartStates.get(iPlayerActiveTrader);
-                  if (activePlayerCartState.packed == false) {
-                    // TODO fix not supposed to happen
-                    return [];
-                  }
-                  const [legalProducts, illegalProducts] = activePlayerCartState.cart.products.split(p => p == activePlayerCartState.cart.claimedType);
-                  if (clientGameState.result.result == "searched") {
-                    return [
-                      {
-                        type: "crate",
-                        iPlayerCrate: iPlayerActiveTrader,
-                        animation: "blast lid",
-                      },
-                      {
-                        type: "wait",
-                        delayMs: 1000,
-                      },
-                      {
-                        type: "crate contents",
-                        iPlayerCrate: iPlayerActiveTrader,
-                        animation: {
-                          animation: "display contents",
-                          contents: legalProducts.concat(illegalProducts).map(p => ({ product: p })),
-                          iProductCheekyDelay: clientGameState.result.iProductCheekyDelay,
-                        }
-                      },
-                      {
-                        type: "wait",
-                        delayMs: 1000
-                      },
-                      { // fine revealed
-                        type: "wait",
-                        delayMs: 2000,
-                      },
-                      {
-                        type: "payment",
-                        action: "give",
-                        iPlayerGiver: (illegalProducts.length > 0) ? iPlayerActiveTrader : iPlayerOfficer,
-                        iPlayerReceiver: (illegalProducts.length > 0) ? iPlayerOfficer : iPlayerActiveTrader,
-                        payment: {
-                          money: (illegalProducts.length > 0 ? illegalProducts : legalProducts).map(p => getProductInfo(p).fine as number).reduce((a, b) => a + b, 0)
-                        }
-                      },
-                      {
-                        type: "wait",
-                        delayMs: 1000
-                      },
-                      {
-                        type: "payment",
-                        action: "receive",
-                        iPlayerGiver: (illegalProducts.length > 0) ? iPlayerActiveTrader : iPlayerOfficer,
-                        iPlayerReceiver: (illegalProducts.length > 0) ? iPlayerOfficer : iPlayerActiveTrader,
-                        payment: {
-                          money: (illegalProducts.length > 0 ? illegalProducts : legalProducts).map(p => getProductInfo(p).fine as number).reduce((a, b) => a + b, 0)
-                        }
-                      },
-                      {
-                        type: "wait",
-                        delayMs: 2000,
-                      },
-                      {
-                        type: "crate contents",
-                        iPlayerCrate: iPlayerActiveTrader,
-                        animation: {
-                          animation: "deposit contents",
-                          contents: legalProducts.map(p => ({ product: p, destination: { destination: "supplies", iPlayer: iPlayerActiveTrader } as CrateProductDestination }))
-                            .concat(illegalProducts.map(p => ({ product: p, destination: { destination: "garbage" } }))),
-                          illegalsHidden: false,
-                        }
-                      },
-                      {
-                        type: "wait",
-                        delayMs: 500,
-                      },
-                      {
-                        type: "cart motion",
-                        iPlayerCart: iPlayerActiveTrader,
-                        motion: "suspect area to trader supplies"
-                      },
-                      {
-                        type: "wait",
-                        delayMs: 1000
-                      }
-                    ];
-                  } else { // ignored / ignored for deal
-                    return (
-                      (
-                        (clientGameState.result.result != "ignored for deal")
-                          ? [] as GameAnimationStep[]
-                          : (
-                            (
-                              (clientGameState.result.deal.traderGives.money == 0)
-                                ? []
-                                : [
-                                  { // payment will reveal
-                                    type: "wait",
-                                    delayMs: 2000
-                                  },
-                                  {
-                                    type: "payment",
-                                    action: "give",
-                                    iPlayerGiver: iPlayerActiveTrader,
-                                    iPlayerReceiver: iPlayerOfficer,
-                                    payment: {
-                                      money: clientGameState.result.deal.traderGives.money
-                                    }
-                                  },
-                                  {
-                                    type: "wait",
-                                    delayMs: 1000,
-                                  },
-                                  {
-                                    type: "payment",
-                                    action: "receive",
-                                    iPlayerGiver: iPlayerActiveTrader,
-                                    iPlayerReceiver: iPlayerOfficer,
-                                    payment: {
-                                      money: clientGameState.result.deal.traderGives.money
-                                    }
-                                  },
-                                  {
-                                    type: "wait",
-                                    delayMs: 1000,
-                                  },
-                                ]
-                            ).concat(
-                              (clientGameState.result.deal.officerGives.money == 0)
-                                ? []
-                                : [
-                                  { // payment will reveal
-                                    type: "wait",
-                                    delayMs: 2000
-                                  },
-                                  {
-                                    type: "payment",
-                                    action: "give",
-                                    iPlayerGiver: iPlayerOfficer,
-                                    iPlayerReceiver: iPlayerActiveTrader,
-                                    payment: {
-                                      money: clientGameState.result.deal.officerGives.money,
-                                    }
-                                  },
-                                  { // payment will reveal
-                                    type: "wait",
-                                    delayMs: 2000
-                                  },
-                                  {
-                                    type: "payment",
-                                    action: "receive",
-                                    iPlayerGiver: iPlayerOfficer,
-                                    iPlayerReceiver: iPlayerActiveTrader,
-                                    payment: {
-                                      money: clientGameState.result.deal.officerGives.money,
-                                    }
-                                  },
-                                  { // payment will reveal
-                                    type: "wait",
-                                    delayMs: 1000
-                                  },
-                                ]
-                            )
-                          ) as GameAnimationStep[]
-                      )
-                        .concat([
+                      const [legalProducts, illegalProducts] = activePlayerCartState.cart.products.split(p => p == activePlayerCartState.cart.claimedType);
+                      if (clientGameState.result.result == "searched") {
+                        const paymentRevealStep: PaymentGameAnimationStep = {
+                          type: "payment",
+                          action: "reveal if not yet revealed",
+                          iPlayerGiver: (illegalProducts.length > 0) ? iPlayerActiveTrader : iPlayerOfficer,
+                          iPlayerReceiver: (illegalProducts.length > 0) ? iPlayerOfficer : iPlayerActiveTrader,
+                          payment: {
+                            money: (illegalProducts.length > 0 ? illegalProducts : legalProducts).map(p => getProductInfo(p).fine as number).reduce((a, b) => a + b, 0)
+                          }
+                        };
+
+                        return [
                           {
-                            type: "cart motion",
-                            iPlayerCart: iPlayerActiveTrader,
-                            motion: "suspect area to trader supplies",
+                            type: "crate",
+                            iPlayerCrate: iPlayerActiveTrader,
+                            animation: "blast lid",
                           },
                           {
                             type: "wait",
                             delayMs: 1000,
                           },
                           {
-                            type: "crate",
+                            type: "crate contents",
                             iPlayerCrate: iPlayerActiveTrader,
-                            animation: "open lid",
+                            animation: {
+                              animation: "display contents",
+                              contents: legalProducts.concat(illegalProducts).map(p => ({ product: p })),
+                              iProductCheekyDelay: clientGameState.result.iProductCheekyDelay,
+                            }
                           },
                           {
                             type: "wait",
-                            delayMs: 400,
+                            delayMs: 1000
+                          },
+
+                          paymentRevealStep,
+
+                          {
+                            type: "wait",
+                            delayMs: 2000,
+                          },
+                          {
+                            ...paymentRevealStep,
+                            action: "give",
+                          },
+                          {
+                            type: "wait",
+                            delayMs: 1000
+                          },
+                          {
+                            ...paymentRevealStep,
+                            action: "receive",
+                          },
+                          {
+                            type: "wait",
+                            delayMs: 2000,
                           },
                           {
                             type: "crate contents",
                             iPlayerCrate: iPlayerActiveTrader,
                             animation: {
                               animation: "deposit contents",
-                              contents: legalProducts.concat(illegalProducts).map(p => ({ product: p, destination: { destination: "supplies", iPlayer: iPlayerActiveTrader } })),
-                              illegalsHidden: true
+                              contents: legalProducts.map(p => ({ product: p, destination: { destination: "supplies", iPlayer: iPlayerActiveTrader } as CrateProductDestination }))
+                                .concat(illegalProducts.map(p => ({ product: p, destination: { destination: "garbage" } }))),
+                              illegalsHidden: false,
                             }
                           },
                           {
                             type: "wait",
-                            delayMs: 1000,
+                            delayMs: 500,
+                          },
+                        ];
+                      } else { // ignored / ignored for deal
+                        return (
+                          (
+                            (clientGameState.result.result != "ignored for deal")
+                              ? [] as GameAnimationStep[]
+                              : (
+                                (
+                                  (clientGameState.result.deal.traderGives.money == 0)
+                                    ? []
+                                    : [{
+                                      type: "payment",
+                                      action: "reveal if not yet revealed",
+                                      iPlayerGiver: iPlayerActiveTrader,
+                                      iPlayerReceiver: iPlayerOfficer,
+                                      payment: {
+                                        money: clientGameState.result.deal.traderGives.money
+                                      }
+                                    } satisfies PaymentGameAnimationStep]
+                                ).concat(
+                                  (clientGameState.result.deal.officerGives.money == 0)
+                                    ? []
+                                    : [{
+                                      type: "payment",
+                                      action: "reveal if not yet revealed",
+                                      iPlayerGiver: iPlayerOfficer,
+                                      iPlayerReceiver: iPlayerActiveTrader,
+                                      payment: {
+                                        money: clientGameState.result.deal.officerGives.money,
+                                      }
+                                    } satisfies PaymentGameAnimationStep]
+                                )
+                                  .map((paymentRevealStep): GameAnimationStep[] => [
+
+                                    paymentRevealStep,
+
+                                    {
+                                      type: "wait",
+                                      delayMs: 2000
+                                    },
+                                    {
+                                      ...paymentRevealStep,
+                                      action: "give",
+                                    },
+                                    {
+                                      type: "wait",
+                                      delayMs: 1000,
+                                    },
+                                    {
+                                      ...paymentRevealStep,
+                                      action: "receive",
+                                    },
+                                    {
+                                      type: "wait",
+                                      delayMs: 1000,
+                                    },
+                                  ])
+                                  .reduce((a, b) => a.concat(b))
+                              )
+                          )
+                        );
+                      }
+                    })(),
+                    onComplete: () => {
+                      if (props.hostInfo.localHost) {
+                        clientSendClientEventToServer({
+                          type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
+                          data: {
+                            sourceClientId: props.localInfo.clientId,
+                            action: {
+                              action: "resolve confirmation ready"
+                            },
                           }
-                        ])
-                    );
-                  }
-                })()
-              });
+                        });
+                      }
+                    },
+                    persistToNextGameState: true,
+                  });
+                } break;
+
+                case "confirming": {
+                  // placeholder to persist the above animation through to "confirming"
+                  return opt({
+                    sequence: [],
+                    onComplete: () => { },
+                    persistToNextGameState: true,
+                  });
+                } break;
+
+                case "continuing": {
+                  return opt({
+                    sequence: ((): GameAnimationStep[] => {
+                      const iPlayerActiveTrader = clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader;
+                      const activePlayerCartState = clientGameState.cartStates.get(iPlayerActiveTrader);
+                      if (activePlayerCartState.packed == false) {
+                        // TODO fix not supposed to happen
+                        return [];
+                      }
+                      const [legalProducts, illegalProducts] = activePlayerCartState.cart.products.split(p => p == activePlayerCartState.cart.claimedType);
+                      if (clientGameState.result.result == "searched") {
+                        return [
+                          {
+                            type: "cart motion",
+                            iPlayerCart: iPlayerActiveTrader,
+                            motion: "suspect area to trader supplies"
+                          },
+                          {
+                            type: "wait",
+                            delayMs: 1000
+                          }
+                        ];
+                      } else { // ignored / ignored for deal
+                        return (
+                          [
+                            {
+                              type: "cart motion",
+                              iPlayerCart: iPlayerActiveTrader,
+                              motion: "suspect area to trader supplies",
+                            },
+                            {
+                              type: "wait",
+                              delayMs: 1000,
+                            },
+                            {
+                              type: "crate",
+                              iPlayerCrate: iPlayerActiveTrader,
+                              animation: "open lid",
+                            },
+                            {
+                              type: "wait",
+                              delayMs: 400,
+                            },
+                            {
+                              type: "crate contents",
+                              iPlayerCrate: iPlayerActiveTrader,
+                              animation: {
+                                animation: "deposit contents",
+                                contents: legalProducts.concat(illegalProducts).map(p => ({ product: p, destination: { destination: "supplies", iPlayer: iPlayerActiveTrader } })),
+                                illegalsHidden: true
+                              }
+                            },
+                            {
+                              type: "wait",
+                              delayMs: 1000,
+                            }
+                          ]
+                        );
+                      }
+                    })(),
+                    onComplete: () => {
+                      if (props.hostInfo.localHost) {
+                        clientSendClientEventToServer({
+                          type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
+                          data: {
+                            sourceClientId: props.localInfo.clientId,
+                            action: {
+                              action: "resolve completed"
+                            },
+                          }
+                        });
+                      }
+                    },
+                    persistToNextGameState: false,
+                  });
+                } break;
+              }
             }
           }
         }
@@ -4296,9 +4635,21 @@ export default function MenuGame(props: MenuGameProps) {
       ? opt({
         sequence: animationSequence.value.sequence,
         onCompleteRegistrations: onCompleteRegistrations,
+        previousGameStateSequence: previousAnimationSequenceRef.current,
+        persistToNextGameState: animationSequence.value.persistToNextGameState,
       })
       : nullopt;
   })();
+  if (animation.hasValue === true && animation.value.persistToNextGameState === true) {
+    previousAnimationSequenceRef.current = opt(optValueOr(animation.value.previousGameStateSequence, []).concat(animation.value.sequence));
+  } else {
+    previousAnimationSequenceRef.current = nullopt;
+  }
+
+  console.log("clientGameState:");
+  console.log(clientGameState);
+  console.log("animation:");
+  console.log(animation);
 
   // setup timeouts for "wait" type animation steps
   if (animation.hasValue == true) {
@@ -4619,6 +4970,7 @@ export default function MenuGame(props: MenuGameProps) {
 
             <Section id="menu_game_working_center_customs" style={{ display: "inline-block", verticalAlign: "top", flexGrow: "1" }}>
               <Section style={{ display: "inline-block", verticalAlign: "top", minWidth: "400px" }} />
+
               { // <Section Suspect Cart
                 (() => {
                   const { active, staticActive, iPlayerSuspect, suspectCart } = (() => {
@@ -4761,7 +5113,7 @@ export default function MenuGame(props: MenuGameProps) {
                                     return (event) => {
                                       newUpdateToSend = event.newToolState;
                                       if (sendState.queued == false) {
-                                        const minimumRepeatSendIntervalMs = crowbarUpdateMinIntervalMs;
+                                        const minimumRepeatSendIntervalMs = officerToolUpdateMinIntervalMs;
                                         const intervalSinceLastSend = Date.now() - sendState.lastSendTimeMs;
                                         if (intervalSinceLastSend < minimumRepeatSendIntervalMs) {
                                           sendState = { queued: true };
@@ -4799,15 +5151,6 @@ export default function MenuGame(props: MenuGameProps) {
                         <ClaimMessageAnimatedRevealingText
                           key={`menu_game_customs_claim_message_rerender_${renderCount.current}`}
                           usekey={`menu_game_customs_claim_message`}
-                          message={(() => {
-                            if (clientGameState.state == "CustomsIntro") {
-                              const cartState = clientGameState.cartStates.get(clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader);
-                              if (cartState.packed == true && cartState.cart.claimMessage.hasValue == true) {
-                                return cartState.cart.claimMessage.value;
-                              }
-                            }
-                            return "";
-                          })()}
                           animation={animation}
                         />
                       </div>
@@ -4889,6 +5232,7 @@ export default function MenuGame(props: MenuGameProps) {
                   );
                 })()
               }
+
               <Section style={{ display: "inline-block", verticalAlign: "top", minWidth: "400px" }}>
                 { // <Section Proposal
                   (
@@ -5007,150 +5351,476 @@ export default function MenuGame(props: MenuGameProps) {
                     && (clientGameState.result.result != "ignored")
                   )
                     ? (() => {
+                      const iPlayerActiveTrader = clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader;
+                      const activeCart = clientGameState.cartStates.get(iPlayerActiveTrader);
+
+                      const stampInitialDragState: OfficerToolStampState = {
+                        offset: {
+                          x: 0,
+                          y: -100,
+                        },
+                        stamps: [],
+                        heldByOfficer: false,
+                      };
+                      const cartOfficerTools: CartOfficerTools = (
+                        (iPlayerToNum(iPlayerLocal) == iPlayerToNum(iPlayerOfficer) && clientGameState.result.resultState.resultState === "confirming")
+                          ? {
+                            present: true,
+                            state: opt({ tool: "stamp", state: stampInitialDragState }),
+                            controls: {
+                              localControllable: true,
+                              onInternalOfficerToolUpdate: (() => {
+                                // buffer these events to avoid spamming server
+                                let newUpdateToSend: NetworkTypes.OfficerToolState = nullopt;
+                                let sendState: (
+                                  | { queued: false, lastSendTimeMs: number }
+                                  | { queued: true }
+                                ) =
+                                  { queued: false, lastSendTimeMs: 0 };
+                                let fullyUsedStampEventSent = false;
+                                const sendTheNewToolStateToSend = () => {
+                                  const sendingUpdate = newUpdateToSend;
+                                  sendState = { queued: false, lastSendTimeMs: Date.now() };
+
+                                  if (!fullyUsedStampEventSent) {
+                                    clientSendClientEventToServer({
+                                      type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
+                                      data: {
+                                        sourceClientId: props.localInfo.clientId,
+                                        action: {
+                                          action: "officer tool update",
+                                          update: {
+                                            newToolState: sendingUpdate,
+                                          }
+                                        }
+                                      }
+                                    });
+
+                                    if (sendingUpdate.hasValue == true
+                                      && sendingUpdate.value.tool == "stamp"
+                                      && !sendingUpdate.value.state.heldByOfficer
+                                      && sendingUpdate.value.state.stamps.length > 0
+                                    ) {
+                                      const update = sendingUpdate.value;
+                                      fullyUsedStampEventSent = true;
+                                      setTimeout(
+                                        () => clientSendClientEventToServer({
+                                          type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
+                                          data: {
+                                            sourceClientId: props.localInfo.clientId,
+                                            action: {
+                                              action: "confirm resolve",
+                                              entryVisaStamps: update.state.stamps,
+                                            }
+                                          }
+                                        }),
+                                        500
+                                      );
+                                    }
+                                  }
+                                };
+
+                                return (event) => {
+                                  newUpdateToSend = event.newToolState;
+                                  if (sendState.queued == false) {
+                                    const minimumRepeatSendIntervalMs = officerToolUpdateMinIntervalMs;
+                                    const intervalSinceLastSend = Date.now() - sendState.lastSendTimeMs;
+                                    if (intervalSinceLastSend < minimumRepeatSendIntervalMs) {
+                                      sendState = { queued: true };
+                                      setTimeout(sendTheNewToolStateToSend, (minimumRepeatSendIntervalMs - intervalSinceLastSend));
+                                    } else {
+                                      sendTheNewToolStateToSend();
+                                    }
+                                  }
+                                };
+                              })()
+                            }
+                          }
+                          : {
+                            present: false,
+                            controls: {
+                              localControllable: false,
+                              registerEventHandlers: (args) => {
+                                onExternalOfficerToolUpdateRegistrations.push(opt((event) => {
+                                  args.onExternalOfficerToolUpdate(event.update);
+                                }));
+                                return { handlerRegistrationId: onExternalOfficerToolUpdateRegistrations.length - 1 };
+                              },
+                              unregisterEventHandlers: (handlerRegistrationId) => {
+                                onExternalOfficerToolUpdateRegistrations[handlerRegistrationId] = nullopt;
+                              },
+                            }
+                          }
+                      );
+
                       const PaymentArea = (paymentAreaProps: {
                         title: string,
-                        visaText: string,
+                        buildVisaBodyEle: (args: {
+                          paymentsData: {
+                            givingListEle: React.ReactNode,
+                            payment: {
+                              iPlayerGiver: ValidPlayerIndex,
+                              payment: {
+                                money: number,
+                              },
+                            },
+                            preAnimationStepPaymentState: "revealed" | "collected" | "distributed" | "not yet revealed",
+                            postAnimationStepPaymentState: "revealed" | "collected" | "distributed" | "not yet revealed",
+                          }[],
+                          buildVisaTextEle: (args: { visaText: string, includesHeader: boolean }) => React.ReactNode,
+                        }) => React.ReactNode,
                         animation: Optional<GameAnimationSequence>,
+                        officerTools: CartOfficerTools,
                       }) => {
-                        const [iGameAnimationStep, setIGameAnimationStep] = React.useState(0);
+                        const paymentsMatch = (
+                          a: { iPlayerGiver: ValidPlayerIndex, payment: { money: number } },
+                          b: { iPlayerGiver: ValidPlayerIndex, payment: { money: number } },
+                        ) => iPlayerToNum(a.iPlayerGiver) === iPlayerToNum(b.iPlayerGiver);
 
-                        React.useEffect(() => {
-                          if (paymentAreaProps.animation.hasValue == true) {
-                            console.log(`Payment Area subscribing`);
-                            paymentAreaProps.animation.value.onCompleteRegistrations.forEach((r, i) => r.push(() => {
-                              setIGameAnimationStep(i + 1);
-                              console.log(`Payment Area updated to animation step ${i + 1}`);
-                            }));
-                          }
-                        }, []);
+                        const { iGameAnimationStep, gameAnimationStep, preAnimationStepState, postAnimationStepState, postAnimationSequenceState } = (
+                          useGameAnimationStates<{
+                            revealedPaymentsStates: {
+                              payment: {
+                                iPlayerGiver: ValidPlayerIndex,
+                                payment: { money: number },
+                              }
+                              state: "revealed" | "collected" | "distributed",
+                            }[],
+                            onStateReached: Optional<() => void>,
+                          }>({
+                            animation: paymentAreaProps.animation,
+                            propsState: {
+                              revealedPaymentsStates: [],
+                              onStateReached: nullopt,
+                            },
 
-                        const payments = (() => {
-                          const payments: {
-                            iPlayerGiver: ValidPlayerIndex,
-                            payment: { money: number },
-                            iAnimationStepGive: number,
-                            iAnimationStepReveal: number,
-                            iAnimationStepDistribute: number,
-                          }[] = [];
-                          if (animation.hasValue == true) {
-                            animation.value.sequence.forEach((step, i) => {
-                              if (step.type == "payment") {
-                                const matchingPayment = (() => {
-                                  const matchingPayments = payments.filter(p => iPlayerToNum(p.iPlayerGiver) == iPlayerToNum(step.iPlayerGiver));
-                                  const firstMatchingPayment = matchingPayments[0];
-                                  if (firstMatchingPayment !== undefined) return firstMatchingPayment;
-                                  else {
-                                    const newPayment = {
+                            getPostStepState({
+                              step,
+                              callAllOnCompletes,
+                              previousState,
+                            }) {
+                              if (step.type === "payment") {
+                                const newRevealedPaymentsStates = previousState.revealedPaymentsStates.shallowCopy();
+                                const stepPaymentState = (() => {
+                                  const stepPaymentInitialState = {
+                                    payment: {
                                       iPlayerGiver: step.iPlayerGiver,
                                       payment: step.payment,
-                                      iAnimationStepGive: 0,
-                                      iAnimationStepReveal: 0,
-                                      iAnimationStepDistribute: 0,
-                                    };
-                                    payments.push(newPayment);
-                                    return newPayment;
+                                    },
+                                    state: "revealed" as "revealed" | "collected" | "distributed",
+                                  };
+                                  for (let i = 0; i < newRevealedPaymentsStates.length; i++) {
+                                    const paymentState = newRevealedPaymentsStates[i];
+                                    if (paymentState === undefined) continue; // TODO fix this should never happen
+                                    if (paymentsMatch(paymentState.payment, stepPaymentInitialState.payment)) {
+                                      newRevealedPaymentsStates[i] = stepPaymentInitialState;
+                                      return stepPaymentInitialState;
+                                    }
                                   }
+                                  // else
+                                  newRevealedPaymentsStates.push(stepPaymentInitialState);
+                                  return stepPaymentInitialState;
                                 })();
-                                if (step.action == "give") {
-                                  matchingPayment.iAnimationStepGive = i;
-                                  matchingPayment.iAnimationStepReveal = i - 1;
-                                } else {
-                                  matchingPayment.iAnimationStepDistribute = i;
+
+                                if (step.action === "reveal if not yet revealed") {
+                                  // there are no paymentStates where this has not yet happened. Leave as-is.
+                                } else if (step.action === "give" && stepPaymentState.state === "revealed") {
+                                  stepPaymentState.state = "collected";
+                                } else if (step.action === "receive") {
+                                  // there are no paymentStates where this has happened (except distributed so okay to overwrite)
+                                  stepPaymentState.state = "distributed";
                                 }
+
+                                return {
+                                  ...previousState,
+                                  revealedPaymentsStates: newRevealedPaymentsStates,
+                                  onStateReached: opt(callAllOnCompletes),
+                                };
+                              } else {
+                                return {
+                                  ...previousState,
+                                  onStateReached: nullopt,
+                                };
                               }
-                            });
+                            },
+
+                            getPostSequenceState({ previousState }) {
+                              return {
+                                ...previousState,
+                                onStateReached: nullopt,
+                              }
+                            },
+                          })
+                        );
+
+                        React.useEffect(() => {
+                          if (
+                            gameAnimationStep.hasValue === true
+                            && gameAnimationStep.value.step.type === "payment"
+                            && gameAnimationStep.value.step.action === "reveal if not yet revealed"
+                          ) {
+                            gameAnimationStep.value.onCompleteRegistrations.forEach(c => c());
                           }
-                          return payments;
-                        })();
+                        }, [iGameAnimationStep]);
 
-                        /*
-                        const givePayments =
-                          animation.hasValue == false
-                            ? []
-                            : animation.value.sequence.filterTransform(step => step.type == "payment" && step.action == "give" ? opt((step as PaymentGameAnimationStep)) : nullopt);
-                        const givePaymentsRevealed =
-                          givePayments.map(p =>
-                            paymentAreaProps.animation.hasValue == true
-                            && paymentAreaProps.animation.value.sequence.some((step, i) => iGameAnimationStep >= i - 1 && step.type == "payment" && step.iPlayerGiver == p.iPlayerGiver));
-                        */
-
-                        const paymentData =
-                          payments
-                            .map(payment => ({
-                              payment,
-                              givingList: (
+                        const allPaymentsData = (
+                          postAnimationSequenceState.revealedPaymentsStates
+                            .map(finalPaymentState => ({
+                              payment: finalPaymentState.payment,
+                              preAnimationStepPaymentState:
+                                preAnimationStepState.revealedPaymentsStates
+                                  .filter(paymentState => paymentsMatch(paymentState.payment, finalPaymentState.payment))
+                                [0]
+                                  ?.state
+                                ?? ("not yet revealed" as "not yet revealed"),
+                              postAnimationStepPaymentState:
+                                postAnimationStepState.revealedPaymentsStates
+                                  .filter(paymentState => paymentsMatch(paymentState.payment, finalPaymentState.payment))
+                                [0]
+                                  ?.state
+                                ?? ("not yet revealed" as "not yet revealed"),
+                            }))
+                            .map(paymentData => ({
+                              ...paymentData,
+                              givingListEle: (
                                 <div>
                                   {
                                     [
                                       {
                                         icon: moneyIcon,
-                                        amount: payment.payment.money
+                                        amount: paymentData.payment.payment.money
                                       }
                                     ]
                                       .filter(s => s.amount > 0)
                                       .map(s => (
-                                        <span key={`menu_game_payment_player_${iPlayerToNum(payment.iPlayerGiver)}_icon_${s.icon}`}>
+                                        <span key={`menu_game_payment_player_${iPlayerToNum(paymentData.payment.iPlayerGiver)}_icon_${s.icon}`}>
                                           {s.amount}{" "}
                                           <span
-                                            style={{ opacity: (iGameAnimationStep > payment.iAnimationStepGive && iGameAnimationStep < payment.iAnimationStepDistribute) ? 1 : 0.3 }}
-                                            id={`menu_game_payment_player_${iPlayerToNum(payment.iPlayerGiver)}_item_money`}>{s.icon}
+                                            style={{
+                                              opacity:
+                                                (paymentData.preAnimationStepPaymentState === "collected" && paymentData.postAnimationStepPaymentState === "collected")
+                                                  ? 1
+                                                  : 0.3
+                                            }}
+                                            id={`menu_game_payment_player_${iPlayerToNum(paymentData.payment.iPlayerGiver)}_item_money`}>{s.icon}
                                           </span>
                                         </span>
                                       ))
                                   }
                                 </div>
                               )
-                            }));
+                            }))
+                        );
+
+                        const currentRenderTimeMs = Date.now();
+
+                        const stampUpdateAnimationFunction = "linear" as "linear";
+
+                        const stampZoneMaximumY = 15;
+                        const inStampZone = (offset: { x: number, y: number }) => (
+                          offset.x >= -30 && offset.x <= 30
+                          && offset.y >= -30 && offset.y <= stampZoneMaximumY
+                        );
+                        const inStampResetZone = (offset: { x: number, y: number }) => (offset.y <= -50);
+
+                        const {
+                          dragData: stampDragData,
+                          onToolMouseDownHandler: onStampMouseDownHandler,
+                          toolUpdateAnimationDurationMs: stampUpdateAnimationDurationMs,
+                          onAnimationComplete: onStampAnimationComplete,
+                        } = (
+                            useOfficerToolDragState<
+                              & OfficerToolStampState
+                              & { stampingState: "ready to stamp" | "just missed stamp" | "just stamped" }
+                            >({
+                              propsTools: paymentAreaProps.officerTools,
+                              toolStateToDragState(toolStateOpt) {
+                                return optBind(
+                                  toolStateOpt,
+                                  toolState =>
+                                    (toolState.tool === "stamp")
+                                      ? opt({
+                                        ...toolState.state,
+                                        // toolStateToDragState is only used for initial state (where justStamped is ready to stamp) 
+                                        // and for external updates (in which case we're not the officer so justStamped isn't needed)
+                                        stampingState: "ready to stamp",
+                                      })
+                                      : nullopt
+                                )
+                              },
+                              dragStateToToolState(dragState) {
+                                return opt({
+                                  tool: "stamp",
+                                  state: dragState,
+                                })
+                              },
+
+                              dragStateIsOfficerControllable(dragState) {
+                                return dragState.heldByOfficer || dragState.stamps.length == 0;
+                              },
+
+                              getMouseReleaseAnimationDestState({ previousState }) {
+                                return {
+                                  ...stampInitialDragState,
+                                  stamps:
+                                    (previousState.stampingState === "ready to stamp" && inStampZone(previousState.offset))
+                                      ? previousState.stamps.concat([previousState.offset])
+                                      : previousState.stamps,
+                                  heldByOfficer: false,
+                                  stampingState: "ready to stamp",
+                                };
+                              },
+
+                              dragStatesEqual(a, b) {
+                                const stampsZipped = a.stamps.zip(b.stamps);
+                                return (
+                                  a.offset.x == b.offset.x && a.offset.y == b.offset.y
+                                  && a.heldByOfficer === b.heldByOfficer
+                                  && a.stampingState === b.stampingState
+                                  && stampsZipped !== undefined && stampsZipped.every(([as, bs]) => as.x == bs.x && as.y == bs.y)
+                                );
+                              },
+
+                              calculateDraggedState(args) {
+                                const newOffset = (() => {
+                                  const newOffsetRaw = {
+                                    x: stampInitialDragState.offset.x + (args.mouseDragPosition.x - args.mouseDownPosition.x),
+                                    y: stampInitialDragState.offset.y + (args.mouseDragPosition.y - args.mouseDownPosition.y),
+                                  }
+                                  if (newOffsetRaw.y < stampZoneMaximumY) return newOffsetRaw;
+                                  else if (inStampZone(args.previousState.offset) && args.previousState.stampingState === "just stamped") {
+                                    return args.previousState.offset;
+                                  } else if (newOffsetRaw.y < args.previousState.offset.y) {
+                                    return newOffsetRaw;
+                                  } else {
+                                    const paperInterceptOffset = {
+                                      x: args.previousState.offset.x + (
+                                        (
+                                          (stampZoneMaximumY - args.previousState.offset.y)
+                                          / (newOffsetRaw.y - args.previousState.offset.y)
+                                        )
+                                        * (newOffsetRaw.x - args.previousState.offset.x)
+                                      ),
+                                      y: stampZoneMaximumY,
+                                    };
+                                    if (inStampZone(paperInterceptOffset)) return paperInterceptOffset;
+                                    else return newOffsetRaw;
+                                  }
+                                })();
+
+                                return {
+                                  heldByOfficer: true,
+                                  offset: newOffset,
+                                  ...(
+                                    (args.previousState.stampingState === "ready to stamp" && inStampZone(newOffset))
+                                      ? (newOffset.y < args.previousState.offset.y && inStampZone(args.previousState.offset))
+                                        ? {
+                                          stampingState: "just stamped",
+                                          stamps: args.previousState.stamps.concat([args.previousState.offset])
+                                        }
+                                        : (newOffset.y == stampZoneMaximumY)
+                                          ? {
+                                            stampingState: "just stamped",
+                                            stamps: args.previousState.stamps.concat([newOffset])
+                                          }
+                                          : {
+                                            stampingState: "ready to stamp",
+                                            stamps: args.previousState.stamps,
+                                          }
+                                      : (args.previousState.stampingState === "ready to stamp" && newOffset.y >= stampZoneMaximumY)
+                                        ? {
+                                          stampingState: "just missed stamp",
+                                          stamps: args.previousState.stamps,
+                                        }
+                                        : (args.previousState.stampingState !== "ready to stamp" && inStampResetZone(newOffset))
+                                          ? {
+                                            stampingState: "ready to stamp",
+                                            stamps: args.previousState.stamps
+                                          } :
+                                          {
+                                            stampingState: args.previousState.stampingState,
+                                            stamps: args.previousState.stamps,
+                                          }
+                                  ),
+                                };
+                              },
+
+                              animationFunction: stampUpdateAnimationFunction,
+                              calculateInterruptedAnimationState(args) {
+                                const interruptedOffset = {
+                                  x: args.startState.offset.x + (args.animationProgress * (args.endState.offset.x - args.startState.offset.x)),
+                                  y: args.startState.offset.y + (args.animationProgress * (args.endState.offset.y - args.startState.offset.y)),
+                                };
+                                return {
+                                  offset: interruptedOffset,
+                                  stamps: args.startState.stamps,
+                                  heldByOfficer: args.endState.heldByOfficer,
+                                  stampingState:
+                                    (
+                                      args.startState.stampingState !== "ready to stamp"
+                                      && args.endState.stampingState === "ready to stamp"
+                                      && inStampResetZone(interruptedOffset)
+                                    )
+                                      ? "ready to stamp"
+                                      : args.startState.stampingState,
+                                };
+                              },
+                            })
+                          );
 
                         return (
-                          <Section title={paymentAreaProps.title} style={{ opacity: payments.some(p => iGameAnimationStep >= p.iAnimationStepReveal) ? 1 : 0 }}>
+                          <Section title={paymentAreaProps.title} style={{
+                            opacity: postAnimationStepState.revealedPaymentsStates.length > 0 ? 1 : 0
+                          }}>
                             {
                               (() => {
-                                const payment0 = paymentData[0];
-                                if (payment0 !== undefined && paymentData.length <= 2) {
-                                  const payment1 = paymentData[1];
-
+                                if (allPaymentsData.length <= 2) {
                                   return (
-
-                                    <div style={{
-                                      display: "inline-block",
-                                      width: "100%",
-                                      textAlign: "center",
-                                      backgroundImage: `url(${visaScrollImgSrc})`,
-                                      backgroundSize: "contain",
-                                      backgroundPosition: "center",
-                                      backgroundRepeat: "no-repeat",
-                                      zIndex: -4,
-                                    }}>
+                                    <div
+                                      style={{
+                                        display: "inline-block",
+                                        width: "100%",
+                                        textAlign: "center",
+                                        backgroundImage: `url(${visaScrollImgSrc})`,
+                                        backgroundSize: "contain",
+                                        backgroundPosition: "center",
+                                        backgroundRepeat: "no-repeat",
+                                        zIndex: -4,
+                                      }}>
                                       <div style={{ opacity: 0 }}>
                                         <div>~</div>
                                         <div>~</div>
                                       </div>
-                                      <div>
-                                        {
-                                          paymentAreaProps.visaText
-                                            .split("\n")
-                                            .map((l, i) =>
-                                              l.trim() == ""
-                                                ? (<div style={{ opacity: 0 }}>~</div>)
-                                                : (
-                                                  <div style={
-                                                    (i == 0)
-                                                      ? {
-                                                        fontSize: "130%",
-                                                        fontWeight: "bold",
-                                                      }
-                                                      : {}
-                                                  }>
-                                                    {l}
-                                                  </div>)
-                                            )
-                                        }
-                                      </div>
-                                      <div>
-                                        {payment0.givingList}
-                                        {payment1?.givingList}
-                                      </div>
+                                      {
+                                        paymentAreaProps.buildVisaBodyEle({
+                                          paymentsData: allPaymentsData,
+                                          buildVisaTextEle({ visaText, includesHeader }) {
+                                            return (
+                                              <div>
+                                                {
+                                                  visaText
+                                                    .split("\n")
+                                                    .map((l, i) =>
+                                                      l.trim() == ""
+                                                        ? (<div style={{ opacity: 0 }}>~</div>)
+                                                        : (
+                                                          <div style={
+                                                            (i == 0 && includesHeader)
+                                                              ? {
+                                                                fontSize: "130%",
+                                                                fontWeight: "bold",
+                                                              }
+                                                              : {}
+                                                          }>
+                                                            {l}
+                                                          </div>)
+                                                    )
+                                                }
+                                              </div>
+                                            );
+                                          },
+                                        })
+                                      }
                                       <div>
                                         <div style={{
                                           display: "inline-block",
@@ -5168,9 +5838,104 @@ export default function MenuGame(props: MenuGameProps) {
                                           borderRadius: "15px",
                                           borderColor: "black",
                                         }}>
-                                          <div style={{ margin: "5px" }} >
-                                            {props.clients.get(iPlayerOfficer).icon}
+                                          <div style={{ margin: "5px", }}>
+                                            <div style={{
+                                              opacity: 0,
+                                            }}>
+                                              {props.clients.get(iPlayerOfficer).icon}
+                                            </div>
                                           </div>
+                                          {
+                                            (() => {
+                                              const stamps = (
+                                                (stampDragData.hasValue === true)
+                                                  ? opt(stampDragData.value.dragState.stamps)
+                                                  : (clientGameState.result.resultState.resultState === "continuing" && clientGameState.result.result !== "ignored")
+                                                    ? opt(clientGameState.result.resultState.entryVisaStamps)
+                                                    : nullopt
+                                              );
+                                              return (
+                                                <div style={{ position: "relative" }}>
+                                                  {
+                                                    (stamps.hasValue === true)
+                                                      ? (
+                                                        stamps.value.map((stamp, iStamp) => (
+                                                          <div
+                                                            key={`payment_area_stamp_${iStamp}`}
+                                                            style={{
+                                                              margin: "5px",
+                                                              position: "absolute",
+                                                              left: `${0 + stamp.x}px`,
+                                                              bottom: `${0 - stamp.y}px`,
+                                                              zIndex: iStamp,
+                                                            }}
+                                                          >
+                                                            {props.clients.get(iPlayerOfficer).icon}
+                                                          </div>
+                                                        ))
+                                                      )
+                                                      : undefined
+                                                  }
+                                                  <img
+                                                    src={stampImgSrc}
+                                                    draggable={false} // just prevents mouse events from being suppressed by drag events
+                                                    onMouseDown={(event) => { onStampMouseDownHandler(event.nativeEvent); }}
+                                                    style={{
+                                                      opacity: stampDragData.hasValue === true ? 1 : 0,
+                                                      position: "absolute",
+                                                      left: `${0 + (stampDragData.hasValue === true ? stampDragData.value.dragState.offset.x : 0)}px`,
+                                                      bottom: `${0 - (stampDragData.hasValue === true ? stampDragData.value.dragState.offset.y : 0)}px`,
+                                                      width: "100%",
+                                                      zIndex: 3 + (stamps.hasValue === true ? stamps.value.length : 0),
+                                                      animationName:
+                                                        (stampDragData.hasValue === true && stampDragData.value.animation.hasValue === true)
+                                                          ? (
+                                                            `payment_stamp_animation`
+                                                            + `_${stampDragData.value.dragState.offset.x}_${stampDragData.value.dragState.offset.y}`
+                                                            + `_${stampDragData.value.animation.value.destDragState.offset.x}_${stampDragData.value.animation.value.destDragState.offset.y}`
+                                                          )
+                                                          : undefined,
+                                                      animationDuration: `${stampUpdateAnimationDurationMs}ms`,
+                                                      animationIterationCount: 1,
+                                                      animationTimingFunction: stampUpdateAnimationFunction,
+                                                      animationFillMode: "both",
+                                                      animationDirection: "normal",
+                                                      animationDelay: `${Math.floor(
+                                                        (stampDragData.hasValue == false || stampDragData.value.animation.hasValue == false)
+                                                          ? 0
+                                                          : (-Math.min( // negative delay starts animation in middle of animation
+                                                            (currentRenderTimeMs - stampDragData.value.animation.value.animationStartTimeMs),
+                                                            stampUpdateAnimationDurationMs
+                                                          ))
+                                                      )}ms`,
+                                                    }}
+                                                    onAnimationEnd={onStampAnimationComplete}
+                                                  />
+                                                  { // stamp animation Keyframes
+                                                    (stampDragData.hasValue == true && stampDragData.value.animation.hasValue == true)
+                                                      ? (
+                                                        <Keyframes
+                                                          name={
+                                                            `payment_stamp_animation`
+                                                            + `_${stampDragData.value.dragState.offset.x}_${stampDragData.value.dragState.offset.y}`
+                                                            + `_${stampDragData.value.animation.value.destDragState.offset.x}_${stampDragData.value.animation.value.destDragState.offset.y}`
+                                                          }
+                                                          from={{
+                                                            left: `${0 + stampDragData.value.dragState.offset.x}px`,
+                                                            bottom: `${0 - stampDragData.value.dragState.offset.y}px`,
+                                                          }}
+                                                          to={{
+                                                            left: `${0 + stampDragData.value.animation.value.destDragState.offset.x}px`,
+                                                            bottom: `${0 - stampDragData.value.animation.value.destDragState.offset.y}px`,
+                                                          }}
+                                                        />
+                                                      )
+                                                      : undefined
+                                                  }
+                                                </div>
+                                              );
+                                            })()
+                                          }
                                         </div>
                                       </div>
                                       <div style={{ opacity: 0 }}>
@@ -5183,15 +5948,20 @@ export default function MenuGame(props: MenuGameProps) {
                                   return (
                                     <div>
                                       {
-                                        paymentData
-                                          .map(({ payment, givingList }) => {
+                                        allPaymentsData
+                                          .map((paymentData) => {
                                             return (
                                               <Section
-                                                key={`menu_game_payment_area_${iPlayerToNum(payment.iPlayerGiver)}`}
-                                                title={`${props.clients.get(payment.iPlayerGiver).name} pays:`}
-                                                style={{ opacity: iGameAnimationStep >= payment.iAnimationStepReveal ? 1 : 0 }}
+                                                key={`menu_game_payment_area_${iPlayerToNum(paymentData.payment.iPlayerGiver)}`}
+                                                title={`${props.clients.get(paymentData.payment.iPlayerGiver).name} pays:`}
+                                                style={{
+                                                  opacity:
+                                                    (paymentData.preAnimationStepPaymentState === "not yet revealed" && paymentData.postAnimationStepPaymentState === "not yet revealed")
+                                                      ? 0
+                                                      : 1
+                                                }}
                                               >
-                                                {givingList}
+                                                {paymentData.givingListEle}
                                               </Section>
                                             );
                                           })
@@ -5205,8 +5975,6 @@ export default function MenuGame(props: MenuGameProps) {
                         );
                       }
 
-                      const iPlayerActiveTrader = clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader;
-                      const activeCart = clientGameState.cartStates.get(iPlayerActiveTrader);
                       if (activeCart.packed == false) {
                         // TODO fix shouldn't happen
                         return (<div></div>);
@@ -5216,40 +5984,69 @@ export default function MenuGame(props: MenuGameProps) {
                           <PaymentArea
                             key={`menu_game_payment_area_rerender_${renderCount.current}`}
                             title={activeCart.cart.products.every(p => p == activeCart.cart.claimedType) ? "Trader unreasonably searched!" : "Smuggling caught!"}
-                            visaText={
-                              (activeCart.cart.products.every(p => p == activeCart.cart.claimedType))
-                                ? (
-                                  `Incident Report #${getRandomInt(8999) + 1000}
-                                   
-                                  The individual known as
-                                  ${props.clients.get(iPlayerActiveTrader).name}
-                                  is hereby permitted to enter and conduct business in
-                                  ${"Some City Name"},
-                                  having been compensated for unlwaful search 
-                                  in compliance with Trade Code § 438-29, 
-                                  paid at the scene in the amount of:`
-                                )
-                                : (
-                                  `Incident Report #${getRandomInt(8999) + 1000}
-                                   
-                                  The individual known as
-                                  ${props.clients.get(iPlayerActiveTrader).name},
-                                  having issued a false statement 
-                                  in volation of Trade Code § 438-12, 
-                                  is granted conditional entry to
-                                  ${"Some City Name"}
-                                  subject to confiscation of
-                                  ${activeCart.cart.products
-                                    .groupBy(p => p)
-                                    .filter(g => g.key !== activeCart.cart.claimedType)
-                                    .map(g => (`${getProductInfo(g.key).icon}${g.group.length}`))
-                                    .join(", ")
-                                  }
-                                  and fines paid at the scene 
-                                  in the amount of:`
-                                )
-                            }
+                            buildVisaBodyEle={(args) => {
+                              const paymentData = args.paymentsData[0];
+                              if (paymentData === undefined || args.paymentsData.length > 1) {
+                                // unexpected!
+                                console.log(`Unexpected payments data for a search situation:`);
+                                console.log(JSON.stringify(args.paymentsData));
+                                return <div>An error occurred.</div>;
+                              }
+                              if (iPlayerToNum(paymentData.payment.iPlayerGiver) === iPlayerToNum(iPlayerOfficer)) {
+                                return (
+                                  <div>
+                                    {args.buildVisaTextEle({
+                                      includesHeader: true,
+                                      visaText:
+                                        `Incident Report #${clientGameState.counters.incidentReport}
+                                    
+                                        The individual known as
+                                        ${props.clients.get(iPlayerActiveTrader).name}
+                                        is hereby permitted to enter
+                                        and conduct business in
+                                        ${props.settings.cityName},
+                                        having been compensated for unlawful search 
+                                        in compliance with Trade Code § 438-29, 
+                                        paid at the scene in the amount of:`
+                                    })}
+                                    {paymentData.givingListEle}
+                                  </div>
+                                );
+                              } else if (iPlayerToNum(paymentData.payment.iPlayerGiver) === iPlayerToNum(iPlayerActiveTrader)) {
+                                return (
+                                  <div>
+                                    {args.buildVisaTextEle({
+                                      includesHeader: true,
+                                      visaText:
+                                        `Incident Report #${clientGameState.counters.incidentReport}
+                                    
+                                        The individual known as
+                                        ${props.clients.get(iPlayerActiveTrader).name},
+                                        having issued a false statement 
+                                        in violation of Trade Code § 438-12, 
+                                        is granted conditional entry to
+                                        ${props.settings.cityName}
+                                        subject to immediate disposal of
+                                        ${activeCart.cart.products
+                                          .groupBy(p => p)
+                                          .filter(g => g.key !== activeCart.cart.claimedType)
+                                          .map(g => (`${getProductInfo(g.key).icon}${g.group.length}`))
+                                          .join(", ")
+                                        }
+                                        and fines paid in the amount of:`
+                                    })}
+                                    {paymentData.givingListEle}
+                                  </div>
+                                );
+                              } else { // another player?
+                                // unexpected!
+                                console.log(`Unexpected payments data for a search situation:`);
+                                console.log(JSON.stringify(args.paymentsData));
+                                return <div>An error occurred.</div>;
+                              }
+                            }}
                             animation={animation}
+                            officerTools={cartOfficerTools}
                           />
                         );
                       } else { // deal struck
@@ -5257,17 +6054,83 @@ export default function MenuGame(props: MenuGameProps) {
                           <PaymentArea
                             key={`menu_game_payment_area_rerender_${renderCount.current}`}
                             title={"Deal accepted!"}
-                            visaText={
-                              `Entry Visa #${getRandomInt(8999) + 1000}
-                               
-                              The individual known as
-                              ${props.clients.get(iPlayerActiveTrader).name}
-                              is hereby permitted to enter and conduct business in 
-                              ${"Some City Name"},
-                              having paid the required border control 
-                              "administrative fees" in the amounts of:`
-                            }
+                            buildVisaBodyEle={(args) => {
+                              const traderPaymentData = args.paymentsData.filter(d => iPlayerToNum(d.payment.iPlayerGiver) === iPlayerToNum(iPlayerActiveTrader))[0];
+                              const officerPaymentData = args.paymentsData.filter(d => iPlayerToNum(d.payment.iPlayerGiver) === iPlayerToNum(iPlayerOfficer))[0];
+                              if (
+                                (traderPaymentData === undefined && officerPaymentData === undefined)
+                                || args.paymentsData.some(d => !(d === traderPaymentData || d === officerPaymentData))
+                              ) {
+                                // unexpected!
+                                console.log(`Unexpected payments data for a ignore for deal situation:`);
+                                console.log(JSON.stringify(args.paymentsData));
+                                return <div>An error occurred.</div>;
+                              }
+
+                              return (
+                                <div>
+                                  {args.buildVisaTextEle({
+                                    includesHeader: true,
+                                    visaText:
+                                      `Special Entry Visa #${clientGameState.counters.entryVisa}
+                                
+                                      The individual known as
+                                      ${props.clients.get(iPlayerActiveTrader).name}
+                                      is hereby permitted to enter 
+                                      and conduct business in 
+                                      ${props.settings.cityName},`
+                                  })}
+                                  {
+                                    (() => {
+                                      if (traderPaymentData !== undefined) {
+                                        return (
+                                          <div>
+                                            {args.buildVisaTextEle({
+                                              includesHeader: false,
+                                              visaText:
+                                                `having paid the required border control 
+                                                administrative fees in the amounts of:`
+                                            })}
+                                            {traderPaymentData.givingListEle}
+                                            {
+                                              (officerPaymentData !== undefined)
+                                                ? (
+                                                  <div>
+                                                    {args.buildVisaTextEle({
+                                                      includesHeader: false,
+                                                      visaText:
+                                                        `and having been paid good behavior
+                                                        credits in the amounts of:`
+                                                    })}
+                                                    {officerPaymentData.givingListEle}
+                                                  </div>
+                                                )
+                                                : undefined
+                                            }
+                                          </div>
+                                        )
+                                      } else if (officerPaymentData !== undefined) { // only officer pays
+                                        return (
+                                          <div>
+                                            {args.buildVisaTextEle({
+                                              includesHeader: false,
+                                              visaText:
+                                                `having been paid good behavior credits 
+                                                in the amounts of:`
+                                            })}
+                                            {officerPaymentData?.givingListEle}
+                                          </div>
+                                        )
+                                      } else { // TODO fix should never happen with if statement above
+                                        return (<div></div>)
+                                      }
+                                    })()
+                                  }
+                                </div>
+                              )
+                            }}
                             animation={animation}
+                            officerTools={cartOfficerTools}
                           />
                         );
                       }

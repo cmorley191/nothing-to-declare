@@ -75,6 +75,9 @@ declare global {
 
     indexed(): [T, number][]
 
+    padLeft(args: { toLength: number, getPadElement: (i: number) => T }): T[]
+    padRight(args: { toLength: number, getPadElement: (i: number, arrayIndex: number) => T }): T[]
+
     /**
      * Splits the array into two arrays `[trues, falses]` using the predicate.
      * The first array contains elements that predicate returned `true` for,
@@ -151,6 +154,25 @@ Array.prototype.groupwise = function <T>(this: T[], groupSize: number) {
 Array.prototype.indexed = function <T>(this: T[]) {
   return this.map((x, i) => [x, i]);
 }
+
+Array.prototype.padLeft = function <T>(this: T[], args: { toLength: number, getPadElement: (i: number) => T }) {
+  if (this.length >= args.toLength) return this;
+  else return (
+    Array(args.toLength - this.length).fill(0)
+      .map(i => args.getPadElement(i))
+      .concat(this)
+  );
+}
+Array.prototype.padRight = function <T>(this: T[], args: { toLength: number, getPadElement: (i: number, arrayIndex: number) => T }) {
+  if (this.length >= args.toLength) return this;
+  else return (
+    this.concat(
+      Array(args.toLength - this.length).fill(0)
+        .map(i => args.getPadElement(i, this.length + i))
+    )
+  );
+}
+
 
 Array.prototype.shallowCopy = function <T>(this: T[]) {
   return [...this];

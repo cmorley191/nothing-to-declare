@@ -1,7 +1,7 @@
 import * as React from "react";
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
 import * as NetworkTypes from "../../core/network_types";
-import { GameSettings, ProductArray, SwapMode, playerIcons, productInfos } from "../../core/game_types";
+import { GameSettings, ProductArray, SwapMode, generateDefaultCityName, playerIcons, productInfos } from "../../core/game_types";
 import { Optional, nullopt, opt } from "../../core/util";
 import AnimatedEllipses from "../elements/animated_ellipses";
 
@@ -32,6 +32,7 @@ type HostInfo =
     | {
       localHost: true,
       gameSettings: {
+        cityName: string,
         numRoundsPerPlayer:
         | { type: "recommended" }
         | { type: "custom", value: number },
@@ -80,6 +81,7 @@ export default function MenuLobby(props: MenuLobbyProps) {
         hostInfo: {
           localHost: true,
           gameSettings: {
+            cityName: generateDefaultCityName(),
             numRoundsPerPlayer: { type: "recommended" },
             generalPoolContractCounts: { type: "recommended" },
             swapMode: "simple",
@@ -242,6 +244,7 @@ export default function MenuLobby(props: MenuLobbyProps) {
             props.onStartGame({
               hostInfo: lobbyMachineState.hostInfo,
               gameSettings: {
+                cityName: event.data.gameSettings.cityName,
                 numRounds: event.data.gameSettings.numRounds,
                 generalPoolContractCounts: deserializedGeneralPoolContractCounts.value,
                 swapMode: event.data.gameSettings.swapMode,
@@ -393,9 +396,12 @@ export default function MenuLobby(props: MenuLobbyProps) {
           alert("The game does not support more than ten players!");
         } else if (lobbyMachineState.selectedPlayerIcon.hasValue == false || lobbyMachineState.otherPlayerIcons.some(icon => icon.hasValue == false)) {
           alert("Everyone must select a player icon before starting!");
+        } else if (lobbyMachineState.hostInfo.gameSettings.cityName.trim() === "") {
+          alert("Enter a city name before starting!");
         } else {
           const startGameData: NetworkTypes.ServerStartGameEventData = {
             gameSettings: {
+              cityName: lobbyMachineState.hostInfo.gameSettings.cityName.trim(),
               numRounds: (
                 (1 + lobbyMachineState.otherClients.length)
                 * (
@@ -489,7 +495,44 @@ export default function MenuLobby(props: MenuLobbyProps) {
               else return (
                 <div>
                   <h4>Game Settings:</h4>
+                  <span>
+                    <button
+                      style={{ width: "70px" }}
+                      onClick={() => {
+                        setLobbyMachineState({
+                          ...lobbyMachineState,
+                          hostInfo: {
+                            ...hostInfo,
+                            gameSettings: {
+                              ...hostInfo.gameSettings,
+                              cityName: generateDefaultCityName(/* blacklistNames: */[hostInfo.gameSettings.cityName]),
+                            }
+                          }
+                        })
+                      }}
+                    >🎲</button>
+                    <span>The Border Checkpoint of{" "}</span>
+                    <input
+                      type="text"
+                      value={hostInfo.gameSettings.cityName}
+                      onChange={(e) => {
+                        setLobbyMachineState({
+                          ...lobbyMachineState,
+                          hostInfo: {
+                            ...hostInfo,
+                            gameSettings: {
+                              ...hostInfo.gameSettings,
+                              cityName: e.target.value,
+                            }
+                          }
+                        })
+                      }}
+                    ></input>
+
+                  </span>
+                  <br></br>
                   <button
+                    style={{ width: "70px" }}
                     onClick={(_e) => {
                       setLobbyMachineState({
                         ...lobbyMachineState,
@@ -559,6 +602,7 @@ export default function MenuLobby(props: MenuLobbyProps) {
                   <div>
                     <span style={{ display: "inline-block", verticalAlign: "top" }}>
                       <button
+                        style={{ width: "70px" }}
                         onClick={(_e) => {
                           setLobbyMachineState({
                             ...lobbyMachineState,

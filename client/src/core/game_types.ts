@@ -1,3 +1,4 @@
+import { EntryVisaStamp } from "./network_types";
 import { Optional, getRandomInt, nullopt, nullopt_t, opt } from "./util";
 
 export const playerIcons = ["😘", "😈", "🎅🏽", "🧙🏽", "💩", "💀", "🤡", "👻", "👽", "🤖", "😹", "🐵"];
@@ -15,6 +16,75 @@ export const firstPlaceIcon = "🥇";
 export const secondPlaceIcon = "🥈";
 export const pointIcon = "⭐";
 export const winnerIcon = "👑";
+
+const defaultCityNameFirstWords = [
+  "Faehearth",
+  "Silvermist",
+  "Wyvernwood",
+  "Graystone",
+  "Frostwillow ",
+  "Stormwood",
+  "Amberleaf",
+  "Shadowfield",
+  "Dragoncrest",
+  "Summerglen",
+  "Starwatch",
+  "Suncrest",
+  "Mistywooden",
+  "Ravencrest",
+  "Ironclad",
+  "Stormhaven",
+  "Silverfort",
+  "Mistyglade",
+  "Dragonridge",
+  "Amberdale",
+  "Thornberry",
+  "Sunstone",
+  "Moonshadow",
+  "Frostvale",
+  "Goldcrest",
+  "Thundercliff",
+  "Crimsonhaven",
+  "Shadowpeak",
+  "Starfallen",
+  "Amberbook",
+  "Dragonwatch",
+  "Nightshade",
+  "Sunburst",
+];
+
+const defaultCityNameSecondWords = [
+  "Forest",
+  "Citadel",
+  "Hollow",
+  "Bay",
+  "Village",
+  "Keep",
+  "Heights",
+  "Stronghold",
+  "Castle",
+  "Hamlet",
+  "Vale",
+  "Bridge",
+  "Fortress",
+  "Borough",
+  "Meadow",
+  "Crossing",
+  "Falls",
+];
+
+export function generateDefaultCityName(blacklistNames?: string[]) {
+  const generateFrom = (list: string[]) => {
+    let word = "";
+    do {
+      word = list[getRandomInt(list.length)] ?? "";
+    } while (blacklistNames?.some(n => n.toLowerCase().includes(word.toLowerCase())) ?? false);
+    return word;
+  }
+  const firstWord = generateFrom(defaultCityNameFirstWords);
+  const secondWord = generateFrom(defaultCityNameSecondWords);
+  return `${firstWord} ${secondWord}`;
+}
 
 export enum ProductType {
   MILK = 0,
@@ -283,11 +353,13 @@ export class PlayerArray<T> {
 
 export type SwapMode = "simple" | "strategic";
 export type GameSettings = {
+  cityName: string,
   numRounds: number,
   generalPoolContractCounts: ProductArray<number>,
   swapMode: SwapMode,
 };
 export type SerializableGameSettings = {
+  cityName: string,
   numRounds: number,
   generalPoolContractCounts: number[],
   swapMode: SwapMode,
@@ -339,10 +411,18 @@ export type IgnoreDeal = {
 export type PersistentGameState = {
   communityPools: CommunityContractPools,
   traderSupplies: PlayerArray<TraderSupplies>,
+  counters: {
+    entryVisa: number,
+    incidentReport: number,
+  }
 }
 export type SerializablePersistentGameState = {
   communityPools: CommunityContractPools,
   traderSupplies: SerializableTraderSupplies[],
+  counters: {
+    entryVisa: number,
+    incidentReport: number,
+  }
 }
 
 export type ServerRoundGameState =
@@ -362,14 +442,29 @@ export type ServerGameState =
     & (
       | { customsState: "ready" }
       | { customsState: "interrogating", iPlayerActiveTrader: ValidatedPlayerIndex, proposedDeal: Optional<IgnoreDeal & { waitingOnOfficer: boolean }> }
-      | (
-        & { customsState: "resolving", iPlayerActiveTrader: ValidatedPlayerIndex }
-        & (
-          | { result: "searched", iProductCheekyDelay: Optional<number> }
-          | { result: "ignored" }
-          | { result: "ignored for deal", deal: IgnoreDeal }
+      | ({
+        customsState: "resolving",
+        iPlayerActiveTrader: ValidatedPlayerIndex,
+        result: (
+          | {
+            result: "searched",
+            iProductCheekyDelay: Optional<number>,
+            resultState: (
+              | { resultState: "searching" | "confirming" }
+              | { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] }
+            )
+          }
+          | { result: "ignored", resultState: { resultState: "continuing" } }
+          | {
+            result: "ignored for deal",
+            deal: IgnoreDeal,
+            resultState: (
+              | { resultState: "paying" | "confirming" }
+              | { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] }
+            )
+          }
         )
-      )
+      })
     )
   )
   | ({ state: "Refresh" } & ServerRoundGameState)
@@ -384,14 +479,29 @@ export type SerializableServerGameState =
     & (
       | { customsState: "ready" }
       | { customsState: "interrogating", iPlayerActiveTrader: number, proposedDeal: Optional<IgnoreDeal & { waitingOnOfficer: boolean }> }
-      | (
-        & { customsState: "resolving", iPlayerActiveTrader: number }
-        & (
-          | { result: "searched", iProductCheekyDelay: Optional<number> }
-          | { result: "ignored" }
-          | { result: "ignored for deal", deal: IgnoreDeal }
+      | ({
+        customsState: "resolving",
+        iPlayerActiveTrader: number,
+        result: (
+          | {
+            result: "searched",
+            iProductCheekyDelay: Optional<number>,
+            resultState: (
+              | { resultState: "searching" | "confirming" }
+              | { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] }
+            )
+          }
+          | { result: "ignored", resultState: { resultState: "continuing" } }
+          | {
+            result: "ignored for deal",
+            deal: IgnoreDeal,
+            resultState: (
+              | { resultState: "paying" | "confirming" }
+              | { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] }
+            )
+          }
         )
-      )
+      })
     )
   )
   | ({ state: "Refresh" } & SerializableServerRoundGameState)
@@ -480,12 +590,27 @@ export type ClientGameState = (
           | ({ localActiveTrader: true } & TraderClientRoundGameState)
           | ({ localActiveTrader: false, iPlayerActiveTrader: ValidatedPlayerIndex } & ClientRoundGameState)
         )
-        & {
-          result:
-          | { result: "searched", iProductCheekyDelay: Optional<number> }
-          | { result: "ignored" }
-          | { result: "ignored for deal", deal: IgnoreDeal }
-        }
+        & ({
+          result: (
+            | {
+              result: "searched",
+              iProductCheekyDelay: Optional<number>,
+              resultState: (
+                | { resultState: "searching" | "confirming" }
+                | { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] }
+              )
+            }
+            | { result: "ignored", resultState: { resultState: "continuing" } }
+            | {
+              result: "ignored for deal",
+              deal: IgnoreDeal,
+              resultState: (
+                | { resultState: "paying" | "confirming" }
+                | { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] }
+              )
+            }
+          )
+        })
       )
     )
   )
