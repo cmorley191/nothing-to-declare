@@ -122,7 +122,7 @@ export type EntryVisaStamp = {
 export type OfficerToolStampState = {
   offset: { x: number, y: number },
   stamps: EntryVisaStamp[],
-  heldByOfficer: boolean,
+  state: "not held" | "held" | "stamping",
 };
 export type OfficerToolState = Optional<
   | {

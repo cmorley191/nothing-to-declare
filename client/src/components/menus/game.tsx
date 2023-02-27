@@ -1937,7 +1937,7 @@ type CartOfficerTools =
     & {
       controls: {
         localControllable: true,
-        onInternalOfficerToolUpdate: (event: { newToolState: NetworkTypes.OfficerToolState }) => void,
+        onInternalOfficerToolUpdate: (event: { newToolState: NetworkTypes.OfficerToolState, sendUpdateNow: boolean }) => void,
       }
     }
   )
@@ -1957,26 +1957,36 @@ type CartOfficerTools =
  * 
  * Caller provides a TDragState state type to capture the current state of the tool(s) being rendered.
  */
-function useOfficerToolDragState<TDragState>(args: {
+function useNetworkedOfficerToolState<TLocalState>(args: {
   propsTools: CartOfficerTools,
   // if animationFunction options change make sure to update "calculate..." to emulate the functions
-  toolStateToDragState: (toolState: NetworkTypes.OfficerToolState) => Optional<TDragState>,
-  dragStateToToolState: (dragState: TDragState) => NetworkTypes.OfficerToolState,
-  dragStateIsOfficerControllable: (dragState: TDragState) => boolean,
-  getMouseReleaseAnimationDestState: (args: { previousState: TDragState }) => TDragState,
-  dragStatesEqual: (a: TDragState, b: TDragState) => boolean,
-  calculateDraggedState: (args: {
-    previousState: TDragState,
-    mouseDownPosition: { x: number, y: number },
-    mouseDragPosition: { x: number, y: number },
-  }) => TDragState,
+  networkStateToLocalState: (args: {
+    networkState: NetworkTypes.OfficerToolState,
+    previousState: Optional<TLocalState>,
+  }) => Optional<{ state: TLocalState, animateTransition: boolean }>,
+  localStateToNetworkState: (localState: TLocalState) => NetworkTypes.OfficerToolState,
+  stateIsOfficerControllable: (localState: TLocalState) => boolean,
+  statesEqual: (a: TLocalState, b: TLocalState) => boolean,
+  getMouseDownState: (args: {
+    previousState: TLocalState,
+    mousePosition: { x: number, y: number },
+  }) => { state: TLocalState, animateTransition: boolean, sendUpdateNow: boolean },
+  getMouseUpState: (args: {
+    previousState: TLocalState,
+    mousePosition: { x: number, y: number },
+  }) => { state: TLocalState, animateTransition: boolean, sendUpdateNow: boolean },
+  getMouseMoveState: (args: {
+    previousState: TLocalState,
+    mousePosition: { x: number, y: number },
+    mouseDownPosition: Optional<{ x: number, y: number }>,
+  }) => { state: TLocalState, animateTransition: boolean, sendUpdateNow: boolean },
   animationFunction: "linear",
-  calculateInterruptedAnimationState: (args: { animationProgress: number, startState: TDragState, endState: TDragState }) => TDragState,
+  getInterruptedAnimationState: (args: { animationProgress: number, startState: TLocalState, endState: TLocalState }) => TLocalState,
 }) {
   const toolUpdateAnimationDurationMs = officerToolUpdateMinIntervalMs + 50;
-  const calculateInterruptedAnimationState = (funcArgs: { animationStartTimeMs: number, interruptMs: number, startState: TDragState, endState: TDragState }) => {
+  const getInterruptedAnimationState = (funcArgs: { animationStartTimeMs: number, interruptMs: number, startState: TLocalState, endState: TLocalState }) => {
     // currently only linear function permitted
-    return args.calculateInterruptedAnimationState({
+    return args.getInterruptedAnimationState({
       ...funcArgs,
       animationProgress:
         Math.min((funcArgs.interruptMs - funcArgs.animationStartTimeMs), toolUpdateAnimationDurationMs)
@@ -1984,23 +1994,23 @@ function useOfficerToolDragState<TDragState>(args: {
     });
   };
 
-  const [dragData, setDragData] = React.useState<Optional<{
+  const [localData, setLocalData] = React.useState<Optional<{
     mouse:
     | { down: false }
     | { down: true, startPosition: { x: number, y: number } },
-    dragState: TDragState,
+    localState: TLocalState,
     animation: Optional<{
       animationStartTimeMs: number,
-      destDragState: TDragState,
+      destLocalState: TLocalState,
     }>
   }>>(
     args.propsTools.present == false
       ? nullopt
       : optMap(
-        args.toolStateToDragState(args.propsTools.state),
-        dragState => ({
+        args.networkStateToLocalState({ networkState: args.propsTools.state, previousState: nullopt }),
+        localState => ({
           mouse: { down: false },
-          dragState,
+          localState: localState.state,
           animation: nullopt,
         })
       )
@@ -2010,42 +2020,85 @@ function useOfficerToolDragState<TDragState>(args: {
     const controls = args.propsTools.controls;
     if (
       controls.localControllable == false
-      || (dragData.hasValue == true && !(args.dragStateIsOfficerControllable(dragData.value.dragState)))
+      || (localData.hasValue == true && !(args.stateIsOfficerControllable(localData.value.localState)))
     ) {
       return;
     }
 
     const eventTime = Date.now();
-    setDragData(() => {
-      if (dragData.hasValue == false) return nullopt;
-      if (dragData.value.mouse.down == funcArgs.downEvent) { // repeat event, shouldn't happen
-        return dragData;
+    setLocalData(() => {
+      if (localData.hasValue == false) return nullopt;
+      if (localData.value.mouse.down == funcArgs.downEvent) { // repeat event, shouldn't happen
+        return localData;
       }
 
-      controls.onInternalOfficerToolUpdate({
-        newToolState: args.dragStateToToolState(dragData.value.dragState),
-      });
+      const animationData = optMap(localData.value.animation,
+        animation => ({
+          animation: animation,
+          interruptState: getInterruptedAnimationState({
+            animationStartTimeMs: animation.animationStartTimeMs,
+            interruptMs: eventTime,
+            startState: localData.value.localState,
+            endState: animation.destLocalState,
+          })
+        })
+      );
 
-      if (funcArgs.downEvent == true) {
-        return opt({
-          mouse: { down: true, startPosition: { x: funcArgs.event.clientX, y: funcArgs.event.clientY } },
-          dragState: dragData.value.dragState,
-          animation: nullopt,
+      const currentState = animationData.hasValue === true ? animationData.value.interruptState : localData.value.localState;
+
+      const newLocalState =
+        (
+          (funcArgs.downEvent == true)
+            ? args.getMouseDownState
+            : args.getMouseUpState
+        )({
+          previousState: currentState,
+          mousePosition: { x: funcArgs.event.clientX, y: funcArgs.event.clientY },
         });
-      } else {
-        const releaseDestState = args.getMouseReleaseAnimationDestState({ previousState: dragData.value.dragState });
+
+      if (animationData.hasValue === true && args.statesEqual(newLocalState.state, animationData.value.animation.destLocalState)) {
         return opt({
-          mouse: { down: false },
-          dragState: dragData.value.dragState,
-          animation:
-            args.dragStatesEqual(dragData.value.dragState, releaseDestState)
-              ? nullopt
-              : opt({
+          ...localData.value,
+          mouse:
+            (funcArgs.downEvent == true)
+              ? { down: true, startPosition: { x: funcArgs.event.clientX, y: funcArgs.event.clientY } }
+              : { down: false },
+          animation: opt({
+            ...animationData.value.animation,
+            destLocalState: newLocalState.state,
+          })
+        });
+      }
+
+      const currentEqualsNew = args.statesEqual(currentState, newLocalState.state);
+
+      if (!currentEqualsNew) {
+        controls.onInternalOfficerToolUpdate({
+          newToolState: args.localStateToNetworkState(newLocalState.state),
+          sendUpdateNow: newLocalState.sendUpdateNow,
+        });
+      }
+
+      return opt({
+        mouse:
+          (funcArgs.downEvent == true)
+            ? { down: true, startPosition: { x: funcArgs.event.clientX, y: funcArgs.event.clientY } }
+            : { down: false },
+        ...(
+          (!currentEqualsNew && (newLocalState.animateTransition || animationData.hasValue === true))
+            ? {
+              localState: currentState,
+              animation: opt({
                 animationStartTimeMs: eventTime,
-                destDragState: releaseDestState,
+                destLocalState: newLocalState.state
               })
-        });
-      }
+            }
+            : {
+              localState: newLocalState.state,
+              animation: nullopt,
+            }
+        )
+      });
     });
   }
 
@@ -2054,40 +2107,59 @@ function useOfficerToolDragState<TDragState>(args: {
     if (controls.localControllable == false) {
       const { handlerRegistrationId } = controls.registerEventHandlers({
         onExternalOfficerToolUpdate: (event) => {
-          if (dragData.hasValue == true && !(args.dragStateIsOfficerControllable(dragData.value.dragState))) {
+          if (localData.hasValue == true && !(args.stateIsOfficerControllable(localData.value.localState))) {
             return;
           }
 
           const eventTime = Date.now();
-          setDragData(() => {
-            const newDragStateOpt = args.toolStateToDragState(event.newToolState);
-            return optMap(newDragStateOpt,
-              newDragState => {
-                if (dragData.hasValue == false) {
+          setLocalData(() => {
+            const newLocalStateOpt = args.networkStateToLocalState({ networkState: event.newToolState, previousState: optMap(localData, localData => localData.localState) });
+            return optMap(newLocalStateOpt,
+              newLocalState => {
+                if (localData.hasValue == false) {
                   return {
                     mouse: { down: false }, // arbitrary -- this won't be used since localControllable false
-                    dragState: newDragState,
+                    localState: newLocalState.state,
                     animation: nullopt,
                   };
                 } else {
-                  const currentDragState = (
-                    (dragData.value.animation.hasValue == false)
-                      ? dragData.value.dragState
-                      : calculateInterruptedAnimationState({
+                  if (localData.value.animation.hasValue === true && args.statesEqual(newLocalState.state, localData.value.animation.value.destLocalState)) {
+                    return {
+                      ...localData.value,
+                      animation: opt({
+                        ...localData.value.animation.value,
+                        destLocalState: newLocalState.state,
+                      })
+                    }
+                  }
+
+                  const currentLocalState = (
+                    (localData.value.animation.hasValue == false)
+                      ? localData.value.localState
+                      : getInterruptedAnimationState({
                         interruptMs: eventTime,
-                        animationStartTimeMs: dragData.value.animation.value.animationStartTimeMs,
-                        startState: dragData.value.dragState,
-                        endState: dragData.value.animation.value.destDragState,
+                        animationStartTimeMs: localData.value.animation.value.animationStartTimeMs,
+                        startState: localData.value.localState,
+                        endState: localData.value.animation.value.destLocalState,
                       })
                   );
-                  return {
-                    mouse: { down: false }, // won't be used
-                    dragState: currentDragState,
-                    animation: opt({
-                      animationStartTimeMs: eventTime,
-                      destDragState: newDragState,
-                    }),
-                  };
+
+                  if (!args.statesEqual(currentLocalState, newLocalState.state) && (newLocalState.animateTransition)) {
+                    return {
+                      mouse: { down: false }, // won't be used
+                      localState: currentLocalState,
+                      animation: opt({
+                        animationStartTimeMs: eventTime,
+                        destLocalState: newLocalState.state,
+                      }),
+                    };
+                  } else {
+                    return {
+                      ...localData.value,
+                      localState: newLocalState.state,
+                      animation: nullopt,
+                    };
+                  }
                 }
               }
             );
@@ -2099,27 +2171,70 @@ function useOfficerToolDragState<TDragState>(args: {
     } else { // localControllable == true
       const onWindowMouseUpListener = (event: MouseEvent) => { onMouseDownUpHandler({ event, downEvent: false }); };
       const onWindowMouseMoveListener = (event: MouseEvent) => {
-        if (dragData.hasValue == true && !(args.dragStateIsOfficerControllable(dragData.value.dragState))) return;
+        if (localData.hasValue == true && !(args.stateIsOfficerControllable(localData.value.localState))) return;
+        const eventTime = Date.now();
 
-        setDragData(() => {
-          if (dragData.hasValue == false || dragData.value.mouse.down == false) return dragData;
+        setLocalData(() => {
+          if (localData.hasValue == false) return localData;
 
-          const newDragState =
-            args.calculateDraggedState({
-              previousState: dragData.value.dragState,
-              mouseDownPosition: dragData.value.mouse.startPosition,
-              mouseDragPosition: { x: event.clientX, y: event.clientY },
+          const animationData = optMap(localData.value.animation,
+            animation => ({
+              animation: animation,
+              interruptState: getInterruptedAnimationState({
+                animationStartTimeMs: animation.animationStartTimeMs,
+                interruptMs: eventTime,
+                startState: localData.value.localState,
+                endState: animation.destLocalState,
+              })
+            })
+          );
+
+          const currentState = animationData.hasValue === true ? animationData.value.interruptState : localData.value.localState;
+
+          const newLocalState =
+            args.getMouseMoveState({
+              previousState: currentState,
+              mousePosition: { x: event.clientX, y: event.clientY },
+              mouseDownPosition: (localData.value.mouse.down === true) ? opt(localData.value.mouse.startPosition) : nullopt,
             });
 
-          controls.onInternalOfficerToolUpdate({
-            newToolState: args.dragStateToToolState(newDragState)
-          });
+          if (animationData.hasValue === true && args.statesEqual(newLocalState.state, animationData.value.animation.destLocalState)) {
+            return opt({
+              ...localData.value,
+              animation: opt({
+                ...animationData.value.animation,
+                destLocalState: newLocalState.state,
+              })
+            });
+          }
 
-          return opt({
-            ...dragData.value,
-            dragState: newDragState,
-            animation: nullopt,
-          });
+          const currentEqualsNew = args.statesEqual(currentState, newLocalState.state);
+
+          if (!currentEqualsNew) {
+            controls.onInternalOfficerToolUpdate({
+              newToolState: args.localStateToNetworkState(newLocalState.state),
+              sendUpdateNow: newLocalState.sendUpdateNow,
+            });
+          }
+
+          if (!currentEqualsNew && (newLocalState.animateTransition || animationData.hasValue)) {
+            console.log(localData);
+
+            return opt({
+              ...localData.value,
+              localState: currentState,
+              animation: opt({
+                animationStartTimeMs: eventTime,
+                destLocalState: newLocalState.state,
+              })
+            });
+          } else {
+            return opt({
+              ...localData.value,
+              localState: newLocalState.state,
+              animation: nullopt,
+            });
+          }
         })
       };
 
@@ -2131,23 +2246,17 @@ function useOfficerToolDragState<TDragState>(args: {
         window.removeEventListener("mousemove", onWindowMouseMoveListener);
       };
     }
-  }, [dragData]);
+  }, [localData]);
 
   return {
     toolUpdateAnimationDurationMs,
-    dragData,
+    localData,
     onToolMouseDownHandler: (event: MouseEvent) => onMouseDownUpHandler({ event, downEvent: true }),
     onAnimationComplete: () => {
-      if (dragData.hasValue === true && dragData.value.animation.hasValue === true) {
-        const newDragState = dragData.value.animation.value.destDragState;
-        if (args.propsTools.controls.localControllable == true) {
-          args.propsTools.controls.onInternalOfficerToolUpdate({
-            newToolState: args.dragStateToToolState(newDragState),
-          });
-        }
-        setDragData(opt({
-          ...dragData.value,
-          dragState: newDragState,
+      if (localData.hasValue === true && localData.value.animation.hasValue === true) {
+        setLocalData(opt({
+          ...localData.value,
+          localState: localData.value.animation.value.destLocalState,
           animation: nullopt,
         }));
       }
@@ -2177,54 +2286,64 @@ function AnimatedCart(props: {
   const crowbarUpdateAnimationFunction = "linear" as "linear";
 
   const {
-    dragData: crowbarDragData,
+    localData: crowbarDragData,
     onToolMouseDownHandler: onCrowbarMouseDownHandler,
     toolUpdateAnimationDurationMs: crowbarUpdateAnimationDurationMs,
     onAnimationComplete: onCrowbarAnimationComplete,
   } = (
-      useOfficerToolDragState<number>({
+      useNetworkedOfficerToolState<number>({
         propsTools: props.officerTools,
-        toolStateToDragState(toolStateOpt) {
+        networkStateToLocalState({ networkState }) {
           return optBind(
-            toolStateOpt,
+            networkState,
             toolState =>
               (toolState.tool === "crowbar")
-                ? opt(toolState.useProgress)
+                ? opt({ state: toolState.useProgress, animateTransition: true })
                 : nullopt,
           );
         },
-        dragStateToToolState(dragState) {
+        localStateToNetworkState(localUseProgress) {
           return opt({
             tool: "crowbar",
-            useProgress: dragState,
+            useProgress: localUseProgress,
           })
         },
 
-        dragStateIsOfficerControllable(dragState) {
-          return dragState < 1
+        stateIsOfficerControllable(localUseProgress) {
+          return localUseProgress < 1
         },
 
-        getMouseReleaseAnimationDestState(_args) { return 0 },
-
-        dragStatesEqual(a, b) {
-          return a == b;
+        statesEqual(localUseProgressA, localUseProgressB) {
+          return localUseProgressA == localUseProgressB;
         },
 
-        calculateDraggedState(args) {
+        getMouseDownState(args) { return { state: args.previousState, animateTransition: false, sendUpdateNow: false } },
+        getMouseUpState(_args) { return { state: 0, animateTransition: true, sendUpdateNow: true } },
+
+        getMouseMoveState(args) {
           // translates mouse drag pixels [0,400] to crowbar drag progress [0,1] using a log function, 
           // i.e. mouse drag provides more progress at the starting range (e.g. [0,100]) than the ending
           // See on wolfram alpha: "log2(1 + (x/10)) / log2(40) from x = -20 to x = 400"
-          return (
-            Math.min(1, Math.max(0,
-              Math.log2(1 + ((args.mouseDragPosition.y - args.mouseDownPosition.y) / 10))
-              / Math.log2(crowbarDragDistanceRequired / 10)
-            ))
-          );
+          if (args.mouseDownPosition.hasValue === false) {
+            return { state: 0, animateTransition: false, sendUpdateNow: false, };
+          } else {
+            const state = (
+              Math.min(1, Math.max(0,
+                Math.log2(1 + ((args.mousePosition.y - args.mouseDownPosition.value.y) / 10))
+                / Math.log2(crowbarDragDistanceRequired / 10)
+              ))
+            );
+            return {
+              state: isNaN(state) ? 0 : state,
+              animateTransition: true,
+              sendUpdateNow: state === 1,
+            };
+          }
         },
 
         animationFunction: crowbarUpdateAnimationFunction,
-        calculateInterruptedAnimationState(args) {
-          return args.animationProgress * (args.endState - args.startState);
+        getInterruptedAnimationState(args) {
+          return args.startState + (args.animationProgress * (args.endState - args.startState));
         },
       })
     );
@@ -2354,13 +2473,13 @@ function AnimatedCart(props: {
             width: "50%",
             zIndex: 2,
             rotate: (crowbarDragData.hasValue == true && crowbarDragData.value.animation.hasValue == false)
-              ? dragProgressToStyleDegString(crowbarDragData.value.dragState)
+              ? dragProgressToStyleDegString(crowbarDragData.value.localState)
               : undefined,
             animationName: (crowbarDragData.hasValue == true && crowbarDragData.value.animation.hasValue == true)
               ? (
                 `cart_crowbar_animation`
-                + `_${dragProgressToStyleDegString(crowbarDragData.value.dragState)}`
-                + `_${dragProgressToStyleDegString(crowbarDragData.value.animation.value.destDragState)}`
+                + `_${dragProgressToStyleDegString(crowbarDragData.value.localState)}`
+                + `_${dragProgressToStyleDegString(crowbarDragData.value.animation.value.destLocalState)}`
               )
               : undefined,
             animationDuration: `${crowbarUpdateAnimationDurationMs}ms`,
@@ -2387,11 +2506,11 @@ function AnimatedCart(props: {
               <Keyframes
                 name={
                   `cart_crowbar_animation`
-                  + `_${dragProgressToStyleDegString(crowbarDragData.value.dragState)}`
-                  + `_${dragProgressToStyleDegString(crowbarDragData.value.animation.value.destDragState)}`
+                  + `_${dragProgressToStyleDegString(crowbarDragData.value.localState)}`
+                  + `_${dragProgressToStyleDegString(crowbarDragData.value.animation.value.destLocalState)}`
                 }
-                from={{ rotate: dragProgressToStyleDegString(crowbarDragData.value.dragState) }}
-                to={{ rotate: dragProgressToStyleDegString(crowbarDragData.value.animation.value.destDragState) }}
+                from={{ rotate: dragProgressToStyleDegString(crowbarDragData.value.localState) }}
+                to={{ rotate: dragProgressToStyleDegString(crowbarDragData.value.animation.value.destLocalState) }}
               />
             )
             : undefined
@@ -5070,7 +5189,7 @@ export default function MenuGame(props: MenuGameProps) {
                                     let newUpdateToSend: NetworkTypes.OfficerToolState = nullopt;
                                     let sendState: (
                                       | { queued: false, lastSendTimeMs: number }
-                                      | { queued: true }
+                                      | { queued: true, timeout: NodeJS.Timeout }
                                     ) =
                                       { queued: false, lastSendTimeMs: 0 };
                                     let fullyUsedCrowbarEventSent = false;
@@ -5112,12 +5231,19 @@ export default function MenuGame(props: MenuGameProps) {
 
                                     return (event) => {
                                       newUpdateToSend = event.newToolState;
-                                      if (sendState.queued == false) {
+                                      if (event.sendUpdateNow) {
+                                        if (sendState.queued === true) {
+                                          clearTimeout(sendState.timeout);
+                                        }
+                                        sendTheNewToolStateToSend();
+                                      } else if (sendState.queued == false) {
                                         const minimumRepeatSendIntervalMs = officerToolUpdateMinIntervalMs;
                                         const intervalSinceLastSend = Date.now() - sendState.lastSendTimeMs;
-                                        if (intervalSinceLastSend < minimumRepeatSendIntervalMs) {
-                                          sendState = { queued: true };
-                                          setTimeout(sendTheNewToolStateToSend, (minimumRepeatSendIntervalMs - intervalSinceLastSend));
+                                        if (intervalSinceLastSend < minimumRepeatSendIntervalMs && !event.sendUpdateNow) {
+                                          sendState = {
+                                            queued: true,
+                                            timeout: setTimeout(sendTheNewToolStateToSend, (minimumRepeatSendIntervalMs - intervalSinceLastSend))
+                                          };
                                         } else {
                                           sendTheNewToolStateToSend();
                                         }
@@ -5354,19 +5480,19 @@ export default function MenuGame(props: MenuGameProps) {
                       const iPlayerActiveTrader = clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader;
                       const activeCart = clientGameState.cartStates.get(iPlayerActiveTrader);
 
-                      const stampInitialDragState: OfficerToolStampState = {
+                      const stampInitialNetworkState: OfficerToolStampState = {
                         offset: {
                           x: 0,
                           y: -100,
                         },
                         stamps: [],
-                        heldByOfficer: false,
+                        state: "not held",
                       };
                       const cartOfficerTools: CartOfficerTools = (
                         (iPlayerToNum(iPlayerLocal) == iPlayerToNum(iPlayerOfficer) && clientGameState.result.resultState.resultState === "confirming")
                           ? {
                             present: true,
-                            state: opt({ tool: "stamp", state: stampInitialDragState }),
+                            state: opt({ tool: "stamp", state: stampInitialNetworkState }),
                             controls: {
                               localControllable: true,
                               onInternalOfficerToolUpdate: (() => {
@@ -5374,7 +5500,7 @@ export default function MenuGame(props: MenuGameProps) {
                                 let newUpdateToSend: NetworkTypes.OfficerToolState = nullopt;
                                 let sendState: (
                                   | { queued: false, lastSendTimeMs: number }
-                                  | { queued: true }
+                                  | { queued: true, timeout: NodeJS.Timeout }
                                 ) =
                                   { queued: false, lastSendTimeMs: 0 };
                                 let fullyUsedStampEventSent = false;
@@ -5398,7 +5524,7 @@ export default function MenuGame(props: MenuGameProps) {
 
                                     if (sendingUpdate.hasValue == true
                                       && sendingUpdate.value.tool == "stamp"
-                                      && !sendingUpdate.value.state.heldByOfficer
+                                      && sendingUpdate.value.state.state === "not held"
                                       && sendingUpdate.value.state.stamps.length > 0
                                     ) {
                                       const update = sendingUpdate.value;
@@ -5422,12 +5548,19 @@ export default function MenuGame(props: MenuGameProps) {
 
                                 return (event) => {
                                   newUpdateToSend = event.newToolState;
-                                  if (sendState.queued == false) {
+                                  if (event.sendUpdateNow) {
+                                    if (sendState.queued === true) {
+                                      clearTimeout(sendState.timeout);
+                                    }
+                                    sendTheNewToolStateToSend();
+                                  } else if (sendState.queued == false) {
                                     const minimumRepeatSendIntervalMs = officerToolUpdateMinIntervalMs;
                                     const intervalSinceLastSend = Date.now() - sendState.lastSendTimeMs;
-                                    if (intervalSinceLastSend < minimumRepeatSendIntervalMs) {
-                                      sendState = { queued: true };
-                                      setTimeout(sendTheNewToolStateToSend, (minimumRepeatSendIntervalMs - intervalSinceLastSend));
+                                    if (intervalSinceLastSend < minimumRepeatSendIntervalMs && !event.sendUpdateNow) {
+                                      sendState = {
+                                        queued: true,
+                                        timeout: setTimeout(sendTheNewToolStateToSend, (minimumRepeatSendIntervalMs - intervalSinceLastSend))
+                                      };
                                     } else {
                                       sendTheNewToolStateToSend();
                                     }
@@ -5621,152 +5754,203 @@ export default function MenuGame(props: MenuGameProps) {
                           offset.x >= -30 && offset.x <= 30
                           && offset.y >= -30 && offset.y <= stampZoneMaximumY
                         );
-                        const inStampResetZone = (offset: { x: number, y: number }) => (offset.y <= -50);
 
                         const {
-                          dragData: stampDragData,
+                          localData: stampDragData,
                           onToolMouseDownHandler: onStampMouseDownHandler,
                           toolUpdateAnimationDurationMs: stampUpdateAnimationDurationMs,
                           onAnimationComplete: onStampAnimationComplete,
                         } = (
-                            useOfficerToolDragState<
+                            useNetworkedOfficerToolState<
                               & OfficerToolStampState
-                              & { stampingState: "ready to stamp" | "just missed stamp" | "just stamped" }
+                              & (
+                                | { state: "not held" }
+                                | {
+                                  state: "held" | "stamping",
+                                  pickupInfo: {
+                                    mousePosition: { x: number, y: number },
+                                    offset: { x: number, y: number },
+                                  },
+                                }
+                              )
                             >({
                               propsTools: paymentAreaProps.officerTools,
-                              toolStateToDragState(toolStateOpt) {
+                              networkStateToLocalState({ networkState, previousState }) {
                                 return optBind(
-                                  toolStateOpt,
+                                  networkState,
                                   toolState =>
                                     (toolState.tool === "stamp")
-                                      ? opt({
-                                        ...toolState.state,
-                                        // toolStateToDragState is only used for initial state (where justStamped is ready to stamp) 
-                                        // and for external updates (in which case we're not the officer so justStamped isn't needed)
-                                        stampingState: "ready to stamp",
-                                      })
+                                      ? opt(
+                                        {
+                                          state: {
+                                            offset: toolState.state.offset,
+                                            stamps: toolState.state.stamps,
+                                            ...(
+                                              // networkStateToLocalState is only used for initial state (which should always be not held)
+                                              // and for external updates (in which case we're not the officer so mousePickupPosition isn't used)
+                                              (toolState.state.state === "not held")
+                                                ? { state: "not held" }
+                                                : {
+                                                  state: toolState.state.state,
+                                                  pickupInfo: {
+                                                    mousePosition: { x: 0, y: 0 },
+                                                    offset: { x: 0, y: 0 }
+                                                  }
+                                                }
+                                            )
+                                          },
+                                          animateTransition: (
+                                            previousState.hasValue === false
+                                            || previousState.value.offset.x !== toolState.state.offset.x
+                                            || previousState.value.offset.y !== toolState.state.offset.y
+                                          ),
+                                        })
                                       : nullopt
                                 )
                               },
-                              dragStateToToolState(dragState) {
+                              localStateToNetworkState(localState) {
                                 return opt({
                                   tool: "stamp",
-                                  state: dragState,
+                                  state: localState,
                                 })
                               },
 
-                              dragStateIsOfficerControllable(dragState) {
-                                return dragState.heldByOfficer || dragState.stamps.length == 0;
+                              stateIsOfficerControllable(localState) {
+                                return localState.stamps.length == 0 || (localState.state !== "not held");
                               },
 
-                              getMouseReleaseAnimationDestState({ previousState }) {
-                                return {
-                                  ...stampInitialDragState,
-                                  stamps:
-                                    (previousState.stampingState === "ready to stamp" && inStampZone(previousState.offset))
-                                      ? previousState.stamps.concat([previousState.offset])
-                                      : previousState.stamps,
-                                  heldByOfficer: false,
-                                  stampingState: "ready to stamp",
-                                };
-                              },
-
-                              dragStatesEqual(a, b) {
+                              statesEqual(a, b) {
                                 const stampsZipped = a.stamps.zip(b.stamps);
                                 return (
                                   a.offset.x == b.offset.x && a.offset.y == b.offset.y
-                                  && a.heldByOfficer === b.heldByOfficer
-                                  && a.stampingState === b.stampingState
+                                  && a.state === b.state
                                   && stampsZipped !== undefined && stampsZipped.every(([as, bs]) => as.x == bs.x && as.y == bs.y)
                                 );
                               },
 
-                              calculateDraggedState(args) {
-                                const newOffset = (() => {
-                                  const newOffsetRaw = {
-                                    x: stampInitialDragState.offset.x + (args.mouseDragPosition.x - args.mouseDownPosition.x),
-                                    y: stampInitialDragState.offset.y + (args.mouseDragPosition.y - args.mouseDownPosition.y),
-                                  }
-                                  if (newOffsetRaw.y < stampZoneMaximumY) return newOffsetRaw;
-                                  else if (inStampZone(args.previousState.offset) && args.previousState.stampingState === "just stamped") {
-                                    return args.previousState.offset;
-                                  } else if (newOffsetRaw.y < args.previousState.offset.y) {
-                                    return newOffsetRaw;
-                                  } else {
-                                    const paperInterceptOffset = {
-                                      x: args.previousState.offset.x + (
-                                        (
-                                          (stampZoneMaximumY - args.previousState.offset.y)
-                                          / (newOffsetRaw.y - args.previousState.offset.y)
-                                        )
-                                        * (newOffsetRaw.x - args.previousState.offset.x)
-                                      ),
-                                      y: stampZoneMaximumY,
+                              getMouseDownState(args) {
+                                if (args.previousState.state === "not held") {
+                                  return {
+                                    state: {
+                                      ...args.previousState,
+                                      state: "held",
+                                      pickupInfo: {
+                                        mousePosition: args.mousePosition,
+                                        offset: args.previousState.offset,
+                                      }
+                                    },
+                                    animateTransition: false,
+                                    sendUpdateNow: true,
+                                  };
+                                } else if (args.previousState.state === "stamping") {
+                                  // duplicate event? weird
+                                  return {
+                                    state: args.previousState,
+                                    animateTransition: false,
+                                    sendUpdateNow: false,
+                                  };
+                                } else { // "held"
+                                  const newOffset = {
+                                    x: args.previousState.pickupInfo.offset.x + (args.mousePosition.x - args.previousState.pickupInfo.mousePosition.x),
+                                    y: args.previousState.pickupInfo.offset.y + (args.mousePosition.y - args.previousState.pickupInfo.mousePosition.y),
+                                  };
+                                  if (inStampZone(newOffset)) {
+                                    return {
+                                      state: {
+                                        offset: newOffset,
+                                        stamps: args.previousState.stamps.concat([newOffset]),
+                                        state: "stamping",
+                                        pickupInfo: args.previousState.pickupInfo,
+                                      },
+                                      animateTransition: false,
+                                      sendUpdateNow: true,
                                     };
-                                    if (inStampZone(paperInterceptOffset)) return paperInterceptOffset;
-                                    else return newOffsetRaw;
+                                  } else {
+                                    return {
+                                      state: {
+                                        ...stampInitialNetworkState,
+                                        stamps: args.previousState.stamps,
+                                        state: "not held",
+                                      },
+                                      animateTransition: true,
+                                      sendUpdateNow: true,
+                                    };
                                   }
-                                })();
+                                }
+                              },
 
-                                return {
-                                  heldByOfficer: true,
-                                  offset: newOffset,
-                                  ...(
-                                    (args.previousState.stampingState === "ready to stamp" && inStampZone(newOffset))
-                                      ? (newOffset.y < args.previousState.offset.y && inStampZone(args.previousState.offset))
-                                        ? {
-                                          stampingState: "just stamped",
-                                          stamps: args.previousState.stamps.concat([args.previousState.offset])
-                                        }
-                                        : (newOffset.y == stampZoneMaximumY)
-                                          ? {
-                                            stampingState: "just stamped",
-                                            stamps: args.previousState.stamps.concat([newOffset])
-                                          }
-                                          : {
-                                            stampingState: "ready to stamp",
-                                            stamps: args.previousState.stamps,
-                                          }
-                                      : (args.previousState.stampingState === "ready to stamp" && newOffset.y >= stampZoneMaximumY)
-                                        ? {
-                                          stampingState: "just missed stamp",
-                                          stamps: args.previousState.stamps,
-                                        }
-                                        : (args.previousState.stampingState !== "ready to stamp" && inStampResetZone(newOffset))
-                                          ? {
-                                            stampingState: "ready to stamp",
-                                            stamps: args.previousState.stamps
-                                          } :
-                                          {
-                                            stampingState: args.previousState.stampingState,
-                                            stamps: args.previousState.stamps,
-                                          }
-                                  ),
-                                };
+                              getMouseUpState({ previousState }) {
+                                if (previousState.state === "not held" || previousState.state === "held") {
+                                  return { state: previousState, animateTransition: false, sendUpdateNow: false };
+                                } else {
+                                  return {
+                                    state: {
+                                      ...previousState,
+                                      state: "held",
+                                    },
+                                    animateTransition: false,
+                                    sendUpdateNow: true,
+                                  }
+                                }
+                              },
+
+                              getMouseMoveState(args) {
+                                if (args.previousState.state === "stamping" || args.previousState.state === "not held") {
+                                  return {
+                                    state: args.previousState,
+                                    animateTransition: false,
+                                    sendUpdateNow: false,
+                                  };
+                                } else {
+                                  const newOffset = {
+                                    x: args.previousState.pickupInfo.offset.x + (args.mousePosition.x - args.previousState.pickupInfo.mousePosition.x),
+                                    y: args.previousState.pickupInfo.offset.y + (args.mousePosition.y - args.previousState.pickupInfo.mousePosition.y),
+                                  };
+                                  return {
+                                    state: {
+                                      ...args.previousState,
+                                      offset: newOffset,
+                                    },
+                                    animateTransition: false,
+                                    sendUpdateNow: false,
+                                  }
+                                }
                               },
 
                               animationFunction: stampUpdateAnimationFunction,
-                              calculateInterruptedAnimationState(args) {
+                              getInterruptedAnimationState(args) {
                                 const interruptedOffset = {
                                   x: args.startState.offset.x + (args.animationProgress * (args.endState.offset.x - args.startState.offset.x)),
                                   y: args.startState.offset.y + (args.animationProgress * (args.endState.offset.y - args.startState.offset.y)),
                                 };
                                 return {
+                                  ...args.endState,
                                   offset: interruptedOffset,
-                                  stamps: args.startState.stamps,
-                                  heldByOfficer: args.endState.heldByOfficer,
-                                  stampingState:
-                                    (
-                                      args.startState.stampingState !== "ready to stamp"
-                                      && args.endState.stampingState === "ready to stamp"
-                                      && inStampResetZone(interruptedOffset)
-                                    )
-                                      ? "ready to stamp"
-                                      : args.startState.stampingState,
                                 };
                               },
                             })
                           );
+
+                        const stampStateToStyle = (state:
+                          & OfficerToolStampState
+                          & (
+                            | { state: "not held" }
+                            | {
+                              state: "held" | "stamping",
+                              pickupInfo: {
+                                mousePosition: { x: number, y: number },
+                                offset: { x: number, y: number },
+                              },
+                            }
+                          )): React.CSSProperties => {
+                          return {
+                            left: `${state.offset.x}px`,
+                            bottom: `${0
+                              - state.offset.y
+                              + (state.state === "held" ? 10 : 0)
+                              }px`,
+                          };
+                        }
 
                         return (
                           <Section title={paymentAreaProps.title} style={{
@@ -5849,7 +6033,7 @@ export default function MenuGame(props: MenuGameProps) {
                                             (() => {
                                               const stamps = (
                                                 (stampDragData.hasValue === true)
-                                                  ? opt(stampDragData.value.dragState.stamps)
+                                                  ? opt(stampDragData.value.localState.stamps)
                                                   : (clientGameState.result.resultState.resultState === "continuing" && clientGameState.result.result !== "ignored")
                                                     ? opt(clientGameState.result.resultState.entryVisaStamps)
                                                     : nullopt
@@ -5883,16 +6067,15 @@ export default function MenuGame(props: MenuGameProps) {
                                                     style={{
                                                       opacity: stampDragData.hasValue === true ? 1 : 0,
                                                       position: "absolute",
-                                                      left: `${0 + (stampDragData.hasValue === true ? stampDragData.value.dragState.offset.x : 0)}px`,
-                                                      bottom: `${0 - (stampDragData.hasValue === true ? stampDragData.value.dragState.offset.y : 0)}px`,
+                                                      ...(stampDragData.hasValue === true ? stampStateToStyle(stampDragData.value.localState) : {}),
                                                       width: "100%",
                                                       zIndex: 3 + (stamps.hasValue === true ? stamps.value.length : 0),
                                                       animationName:
                                                         (stampDragData.hasValue === true && stampDragData.value.animation.hasValue === true)
                                                           ? (
                                                             `payment_stamp_animation`
-                                                            + `_${stampDragData.value.dragState.offset.x}_${stampDragData.value.dragState.offset.y}`
-                                                            + `_${stampDragData.value.animation.value.destDragState.offset.x}_${stampDragData.value.animation.value.destDragState.offset.y}`
+                                                            + `_${stampDragData.value.localState.offset.x}_${stampDragData.value.localState.offset.y}_${stampDragData.value.localState.state}`
+                                                            + `_${stampDragData.value.animation.value.destLocalState.offset.x}_${stampDragData.value.animation.value.destLocalState.offset.y}_${stampDragData.value.animation.value.destLocalState.state}`
                                                           )
                                                           : undefined,
                                                       animationDuration: `${stampUpdateAnimationDurationMs}ms`,
@@ -5917,17 +6100,11 @@ export default function MenuGame(props: MenuGameProps) {
                                                         <Keyframes
                                                           name={
                                                             `payment_stamp_animation`
-                                                            + `_${stampDragData.value.dragState.offset.x}_${stampDragData.value.dragState.offset.y}`
-                                                            + `_${stampDragData.value.animation.value.destDragState.offset.x}_${stampDragData.value.animation.value.destDragState.offset.y}`
+                                                            + `_${stampDragData.value.localState.offset.x}_${stampDragData.value.localState.offset.y}_${stampDragData.value.localState.state}`
+                                                            + `_${stampDragData.value.animation.value.destLocalState.offset.x}_${stampDragData.value.animation.value.destLocalState.offset.y}_${stampDragData.value.animation.value.destLocalState.state}`
                                                           }
-                                                          from={{
-                                                            left: `${0 + stampDragData.value.dragState.offset.x}px`,
-                                                            bottom: `${0 - stampDragData.value.dragState.offset.y}px`,
-                                                          }}
-                                                          to={{
-                                                            left: `${0 + stampDragData.value.animation.value.destDragState.offset.x}px`,
-                                                            bottom: `${0 - stampDragData.value.animation.value.destDragState.offset.y}px`,
-                                                          }}
+                                                          from={stampStateToStyle(stampDragData.value.localState)}
+                                                          to={stampStateToStyle(stampDragData.value.animation.value.destLocalState)}
                                                         />
                                                       )
                                                       : undefined
