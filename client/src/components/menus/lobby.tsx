@@ -112,7 +112,8 @@ export default function MenuLobby(props: MenuLobbyProps) {
               } break;
 
               case "JOIN":
-              case "LEAVE": {
+              case "LEAVE":
+              case "STAMP": {
                 // ignore while we wait
               } break;
 
@@ -332,6 +333,10 @@ export default function MenuLobby(props: MenuLobbyProps) {
                 handleRedundantWELCOMEMessage(rawMessage);
               } break;
 
+              case "STAMP": {
+                // ignore while we wait
+              } break;
+
               case "MSG": {
                 if (lobbyMachineState.hostInfo.localHost) {
                   // host only receives client events
@@ -426,6 +431,13 @@ export default function MenuLobby(props: MenuLobbyProps) {
             type: NetworkTypes.ServerEventType.START_GAME,
             data: startGameData
           })
+
+          props.ws.ws.send(`STAMP_CLEAR`);
+          props.ws.ws.send(`STAMP`
+            + `|${lobbyMachineState.selectedPlayerIcon.value}` // should really be first player officer but doesn't matter for a blank stamp
+            + `|` // blank stamp
+            + `|${lobbyMachineState.otherClients.map(c => c.clientId).concat([props.localInfo.clientId]).join(",")}`
+          );
         }
       }
 

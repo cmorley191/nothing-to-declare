@@ -3,7 +3,7 @@ import asyncio
 import sys
 import websockets
 
-addr = "ws://localhost:8765"
+addr = f"ws://{sys.argv[1]}"
 
 async def testclient():
   async with websockets.connect(addr) as websocket:
@@ -17,7 +17,12 @@ async def testclient():
     async def receiver(websocket):
       while True:
         msg = await websocket.recv()
-        print(f"<{msg}")
+        if (type(msg) is bytes):
+          with open('msg.bin', 'wb') as f:
+            f.write(msg)
+          print('Binary message written to msg.bin')
+        else:
+          print(f"<{msg}")
 
     await asyncio.gather(
       sender(websocket),

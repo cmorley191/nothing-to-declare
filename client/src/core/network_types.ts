@@ -12,6 +12,7 @@ export type HostClientInfo =
 export type ReceivedMessage =
   | { type: "WELCOME", clientId: number, joinedClientIds: number[] }
   | { type: "MSG", message: string }
+  | { type: "STAMP", stampImageFilename: string }
   | { type: "JOIN", joinedClientId: number }
   | { type: "LEAVE", leftClientId: number };
 
@@ -44,6 +45,15 @@ export function parseReceivedMessage(msg: string): Result<ReceivedMessage, strin
         type: "MSG",
         message: msg.substring(msg.indexOf("|") + 1) // message
       }
+    };
+
+  } else if (msg.startsWith("STAMP|")) { // STAMP|stampImgFilename
+    return {
+      ok: true,
+      value: {
+        type: "STAMP",
+        stampImageFilename: msg.substring(msg.indexOf("|") + 1) // stampImgFilename
+      },
     };
 
   } else if (msg.startsWith("JOIN|")) { // JOIN|clientId
