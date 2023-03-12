@@ -2,7 +2,7 @@ import * as React from "react";
 
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
 import * as NetworkTypes from "../../core/network_types";
-import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings, officerIcon, contractIcon } from "../../core/game_types";
+import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings, officerIcon, contractIcon, crossOutIcon } from "../../core/game_types";
 import { Optional, getRandomInt, nullopt, omitAttrs, opt, optAnd, optBind, optMap, optValueOr } from "../../core/util";
 
 import AnimatedEllipses from "../elements/animated_ellipses";
@@ -961,6 +961,7 @@ function TraderSuppliesTable(props: {
 function SupplyContract(props: {
   productType: Optional<ProductType>,
   highlighted: boolean,
+  crossedOut: boolean,
   [otherOptions: string]: unknown
 }) {
   const attrs = omitAttrs(['productType'], props);
@@ -970,90 +971,102 @@ function SupplyContract(props: {
   return (
     <div
       {...attrs}
-      style={{ position: "relative", ...((attrs['style'] !== undefined ? attrs['style'] : {})) }}
+      style={{ // root div
+        position: "relative",
+        ...((attrs['style'] !== undefined ? attrs['style'] : {}))
+      }}
     >
-      <div>
-        <div style={{
-          whiteSpace: "nowrap",
-          margin: `${contractMarginPx}px`,
-          width: "88px", // TODO replace these hardcoded values with calculated ones? These are the biggest size I saw -- necessary so the Interactable...Stack jitter divs are all the same size
-          height: "82px",
-          position: "relative",
+      <div style={{ // text content div
+        whiteSpace: "nowrap",
+        margin: `${contractMarginPx}px`,
+        width: "88px", // TODO replace these hardcoded values with calculated ones? These are the biggest size I saw -- necessary so the Interactable...Stack jitter divs are all the same size
+        height: "82px",
+        position: "relative",
+      }}>
+        <div style={{ // product icon div
+          display: "inline-block",
+          fontSize: "200%",
+          width: "100%",
+          textAlign: "center",
+          opacity: props.productType.hasValue === true ? 1 : 0
         }}>
-          <div style={{
-            display: "inline-block",
-            fontSize: "200%",
+          {props.productType.hasValue === true ? getProductInfo(props.productType.value).icon : unknownProductIcon}
+        </div>
+        <div hidden={props.productType.hasValue === true /* unknown product icon div */}
+          style={{
+            fontSize: "300%",
             width: "100%",
             textAlign: "center",
-            opacity: props.productType.hasValue === true ? 1 : 0
+            position: "absolute",
+            left: 0,
+            top: "50%",
+            transform: "translate(0, -50%)",
           }}>
-            {props.productType.hasValue === true ? getProductInfo(props.productType.value).icon : unknownProductIcon}
-          </div>
-          <div
-            hidden={props.productType.hasValue === true}
-            style={{
-              fontSize: "300%",
-              width: "100%",
-              textAlign: "center",
-              position: "absolute",
-              left: 0,
-              top: "50%",
-              transform: "translate(0, -50%)",
-            }}>
-            {unknownProductIcon}
-          </div>
+          {unknownProductIcon}
+        </div>
 
-          <div style={{
-            width: "100%",
-            textAlign: "center",
-          }}>
-            {
-              (props.productType.hasValue === true)
-                ? (
-                  <span>
-                    {getProductInfo(props.productType.value).legal ? legalProductIcon : illegalProductIcon}
-                    {" "}
-                    {pointIcon}{getProductInfo(props.productType.value).value}
-                    {" "}
-                    {fineIcon}{getProductInfo(props.productType.value).fine}
+        <div style={{ // product info div
+          width: "100%",
+          textAlign: "center",
+        }}>
+          {
+            (props.productType.hasValue === true)
+              ? (
+                <span>
+                  {getProductInfo(props.productType.value).legal ? legalProductIcon : illegalProductIcon}
+                  {" "}
+                  {pointIcon}{getProductInfo(props.productType.value).value}
+                  {" "}
+                  {fineIcon}{getProductInfo(props.productType.value).fine}
+                </span>
+              )
+              : (
+                <span style={{ opacity: 0 }}>
+                  {unknownProductIcon}{" "}{pointIcon}{0}{" "}{fineIcon}{0}
+                </span>
+              )
+          }
+        </div>
+        <div style={{ // product awards div
+          width: "100%",
+          textAlign: "center",
+        }}>
+          {
+            (() => {
+              const award = (props.productType.hasValue == true ? getProductInfo(props.productType.value).award : nullopt);
+              if (award.hasValue == false) {
+                return (
+                  <span style={{ opacity: 0, fontSize: "60%" }}>
+                    {trophyIcon}{": "}{unknownProductIcon}
                   </span>
                 )
-                : (
-                  <span style={{ opacity: 0 }}>
-                    {unknownProductIcon}{" "}{pointIcon}{0}{" "}{fineIcon}{0}
+              } else {
+                return (
+                  <span style={{ fontSize: "60%" }}>
+                    {trophyIcon}{": "}{Array(award.value.points).fill(getProductInfo(award.value.productType).icon).join("")}
                   </span>
                 )
-            }
-          </div>
-          <div style={{
-            width: "100%",
-            textAlign: "center",
-          }}>
-            {
-              (() => {
-                const award = (props.productType.hasValue == true ? getProductInfo(props.productType.value).award : nullopt);
-                if (award.hasValue == false) {
-                  return (
-                    <span style={{ opacity: 0, fontSize: "60%" }}>
-                      {trophyIcon}{": "}{unknownProductIcon}
-                    </span>
-                  )
-                } else {
-                  return (
-                    <span style={{ fontSize: "60%" }}>
-                      {trophyIcon}{": "}{Array(award.value.points).fill(getProductInfo(award.value.productType).icon).join("")}
-                    </span>
-                  )
-                }
-              })()
-            }
-          </div>
+              }
+            })()
+          }
         </div>
       </div>
+      <div style={{ // cross out div
+        position: "absolute",
+        left: 0,
+        top: 0,
+        width: "100%",
+        height: "100%",
+        zIndex: 1,
+        opacity: (props.crossedOut) ? 1 : 0,
+      }}>
+        {crossOutIcon}
+      </div>
       <img
-        src={(props.productType.hasValue === false || getProductInfo(props.productType.value).category === "legal")
-          ? ((props.highlighted) ? parchmentLegalHighlightedImgSrc : parchmentLegalImgSrc)
-          : ((props.highlighted) ? parchmentIllegalHighlightedImgSrc : parchmentIllegalImgSrc)}
+        src={ // background parchment img
+          (props.productType.hasValue === false || getProductInfo(props.productType.value).category === "legal")
+            ? ((props.highlighted) ? parchmentLegalHighlightedImgSrc : parchmentLegalImgSrc)
+            : ((props.highlighted) ? parchmentIllegalHighlightedImgSrc : parchmentIllegalImgSrc)}
         style={{
           position: "absolute",
           left: 0,
@@ -1070,6 +1083,7 @@ type InteractableSupplyContractData = {
   productType: Optional<ProductType>,
   opacity: ("visible" | "slightly faded" | "faded" | "hidden"),
   highlighted: boolean,
+  crossedOut: boolean,
   clickable: boolean,
 };
 
@@ -1113,7 +1127,11 @@ function SupplyContractsInteractableGrid(props: {
                       onMouseOver={(event) => { if (c.clickable && props.onHover !== undefined) props.onHover({ event: event.nativeEvent, iContract: opt(c.iContract) }) }}
                       onMouseOut={(event) => { if (c.clickable && props.onHover !== undefined) props.onHover({ event: event.nativeEvent, iContract: nullopt }) }}
                     >
-                      <SupplyContract productType={c.productType} highlighted={c.highlighted} />
+                      <SupplyContract
+                        productType={c.productType}
+                        highlighted={c.highlighted}
+                        crossedOut={c.crossedOut}
+                      />
                     </td>
                   ))
                     .concat(Array((iRow == 0) ? 0 : contractsPerRow - g.length).fill(false).map((_blank, iBlank) => (
@@ -1185,7 +1203,11 @@ function SupplyContractsInteractableStack(props: {
                 marginRight: positionJitterStats.leftMax - c.positionJitter.leftPx,
                 marginBottom: positionJitterStats.topMax - c.positionJitter.topPx,
               }}>
-                <SupplyContract productType={c.productType} highlighted={c.highlighted} />
+                <SupplyContract
+                  productType={c.productType}
+                  highlighted={c.highlighted}
+                  crossedOut={c.crossedOut}
+                />
               </div>
             </div>
           ))
@@ -1415,37 +1437,6 @@ function LocalReadyPool(props: {
                     top: "72px",
                     width: "201px",
                     height: "275px",
-                    borderWidth: "2px",
-                    borderStyle: "solid",
-                    borderColor: (
-                      hoveredContract.hasValue === true
-                      && hoveredContract.value.section.section === "general enterable"
-                      && mode.entry.value.selectedForEntry.generalPoolSelectedCount < readyPoolSize
-                    )
-                      ? "black"
-                      : "transparent",
-                  }}
-                  onClick={() => {
-                    if (mode.mode == "select for exit" && mode.entry.hasValue === true && mode.entry.value.entryType === "strategic") {
-                      if (mode.entry.value.selectedForEntry.generalPoolSelectedCount < readyPoolSize) {
-                        const newSelectedForEntry = {
-                          ...mode.entry.value.selectedForEntry,
-                          generalPoolSelectedCount: mode.entry.value.selectedForEntry.generalPoolSelectedCount + 1,
-                        };
-                        setModeState({
-                          ...mode,
-                          entry: opt({
-                            ...mode.entry.value,
-                            selectedForEntry: newSelectedForEntry
-                          })
-                        });
-                        setHoveredContract(nullopt);
-                        if (mode.onChange !== undefined) mode.onChange({
-                          selectedForExit: mode.selectedForExit,
-                          selectedForEntry: opt(newSelectedForEntry)
-                        });
-                      }
-                    }
                   }}
                   onMouseOver={(_event) => {
                     setHoveredContract(opt({
@@ -1501,6 +1492,7 @@ function LocalReadyPool(props: {
                                   productType: opt(p),
                                   opacity: iContract < selectedCount ? "slightly faded" : "visible",
                                   highlighted: highlighted.highlighted,
+                                  crossedOut: false,
                                   clickable: iContract < readyPoolSize,
                                   positionOffset: {
                                     leftPx: positionOffset.leftOffset + ((iContract >= selectedCount) ? 0 : (iPool == 0) ? -50 : 50),
@@ -1534,14 +1526,24 @@ function LocalReadyPool(props: {
                               console.log(`Bad iContract from recycle enterable pool LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
                               console.trace();
                             } else {
+                              const newRecyclePoolSelectedCounts = (() => {
+                                const newCounts = entry.selectedForEntry.recyclePoolSelectedCounts.shallowCopy();
+                                newCounts[iPool] = e.iContract + ((e.iContract < selectedCount) ? 0 : 1)
+                                return newCounts;
+                              })();
+
+                              const newNonGeneralPoolReadyCounts = (
+                                (newRecyclePoolSelectedCounts.reduce((a, b) => a + b))
+                                + (mode.selectedForExit.filter(s => !s).length)
+                              );
+                              const newGeneralSelectedForEntry = Math.max(0, Math.min(readyPoolSize, readyPoolSize - newNonGeneralPoolReadyCounts));
+
                               const newSelectedForEntry = {
                                 ...entry.selectedForEntry,
-                                recyclePoolSelectedCounts: (() => {
-                                  const newCounts = entry.selectedForEntry.recyclePoolSelectedCounts.shallowCopy();
-                                  newCounts[iPool] = e.iContract + ((e.iContract < selectedCount) ? 0 : 1)
-                                  return newCounts;
-                                })(),
+                                recyclePoolSelectedCounts: newRecyclePoolSelectedCounts,
+                                generalPoolSelectedCount: newGeneralSelectedForEntry,
                               };
+
                               setModeState({
                                 ...mode,
                                 entry: opt({
@@ -1626,6 +1628,13 @@ function LocalReadyPool(props: {
                                     && hoveredContract.value.section.iPool === iPool
                                     && ((iContract < selectedCount) ? iContract >= hoveredContract.value.iContract : iContract <= hoveredContract.value.iContract)
                                     && ((iContract < selectedCount) === (hoveredContract.value.iContract < selectedCount)),
+                                  crossedOut:
+                                    mode.entry.hasValue === true
+                                    && (iContract < selectedCount)
+                                    && hoveredContract.hasValue === true
+                                    && (hoveredContract.value.section.section === "recycle enterable" || hoveredContract.value.section.section === "recycle entering")
+                                    && hoveredContract.value.section.iPool === iPool
+                                    && iContract >= hoveredContract.value.iContract,
                                   clickable: iContract < selectedCount,
                                 };
                               })
@@ -1635,14 +1644,24 @@ function LocalReadyPool(props: {
                               console.log(`Bad iContract from recycle entering pool LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
                               console.trace();
                             } else {
+                              const newRecyclePoolSelectedCounts = (() => {
+                                const newCounts = entry.selectedForEntry.recyclePoolSelectedCounts.shallowCopy();
+                                newCounts[iPool] = selectedCount - (selectedCount - e.iContract);
+                                return newCounts;
+                              })();
+
+                              const newNonGeneralPoolReadyCounts = (
+                                (newRecyclePoolSelectedCounts.reduce((a, b) => a + b))
+                                + (mode.selectedForExit.filter(s => !s).length)
+                              );
+                              const newGeneralSelectedForEntry = Math.max(0, Math.min(readyPoolSize, readyPoolSize - newNonGeneralPoolReadyCounts));
+
                               const newSelectedForEntry = {
                                 ...entry.selectedForEntry,
-                                recyclePoolSelectedCounts: (() => {
-                                  const newCounts = entry.selectedForEntry.recyclePoolSelectedCounts.shallowCopy();
-                                  newCounts[iPool] = selectedCount - (selectedCount - e.iContract);
-                                  return newCounts;
-                                })(),
+                                recyclePoolSelectedCounts: newRecyclePoolSelectedCounts,
+                                generalPoolSelectedCount: newGeneralSelectedForEntry,
                               };
+
                               setModeState({
                                 ...mode,
                                 entry: opt({
@@ -1690,35 +1709,66 @@ function LocalReadyPool(props: {
             contracts={
               (mode.mode === "static")
                 ? props.contracts
-                  .map((p) => ({ productType: opt(p), opacity: "visible", highlighted: false, clickable: false }))
+                  .map((p) => ({ productType: opt(p), opacity: "visible", highlighted: false, crossedOut: false, clickable: false }))
                 : // mode == "select for exit"
                 (props.contracts
                   .zip(mode.selectedForExit) ?? []) // TODO fix by moving props.contracts into the state, zipped with selected
-                  .map(([p, s], iContract) => {
+                  .map(([p, selected], iContract) => {
                     return {
                       productType: opt(p),
-                      opacity: (!s) ? "visible" : "faded",
+                      opacity: (!selected) ? "visible" : "faded",
                       highlighted:
                         hoveredContract.hasValue === true
                         && (hoveredContract.value.section.section === "ready" || hoveredContract.value.section.section === "exiting")
                         && hoveredContract.value.iContract === iContract,
+                      crossedOut:
+                        mode.entry.hasValue === true
+                        && (
+                          selected || (
+                            hoveredContract.hasValue === true
+                            && hoveredContract.value.section.section === "ready"
+                            && hoveredContract.value.iContract === iContract
+                          )
+                        ),
                       clickable: true
                     };
                   })
             }
             onClick={(e) => {
               if (mode.mode == "select for exit") {
-                const iContractCurrentSelected = mode.selectedForExit[e.iContract];
-                if (iContractCurrentSelected === undefined) {
+                const iContractCurrentSelectedForExit = mode.selectedForExit[e.iContract];
+                if (iContractCurrentSelectedForExit === undefined) {
                   console.log(`Bad iContract from ready pool LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
                   console.trace();
                 } else {
-                  const newSelected = mode.selectedForExit.shallowCopy();
-                  newSelected[e.iContract] = !iContractCurrentSelected;
-                  setModeState({ ...mode, selectedForExit: newSelected });
+                  const newSelectedForExit = mode.selectedForExit.shallowCopy();
+                  newSelectedForExit[e.iContract] = !iContractCurrentSelectedForExit;
+
+                  const newEntry = optMap(mode.entry,
+                    modeEntryVal => {
+                      if (modeEntryVal.entryType === "simple") return modeEntryVal;
+
+                      const newNonGeneralPoolReadyCounts = (
+                        (modeEntryVal.selectedForEntry.recyclePoolSelectedCounts.reduce((a, b) => a + b))
+                        + (newSelectedForExit.filter(s => !s).length)
+                      );
+                      const newGeneralSelectedForEntry = Math.max(0, Math.min(readyPoolSize, readyPoolSize - newNonGeneralPoolReadyCounts));
+
+                      const newSelectedForEntry = {
+                        ...modeEntryVal.selectedForEntry,
+                        generalPoolSelectedCount: newGeneralSelectedForEntry,
+                      };
+                      return {
+                        ...modeEntryVal,
+                        selectedForEntry: newSelectedForEntry,
+                      }
+                    }
+                  );
+
+                  setModeState({ ...mode, selectedForExit: newSelectedForExit, entry: newEntry });
                   if (mode.onChange !== undefined) mode.onChange({
-                    selectedForExit: newSelected,
-                    selectedForEntry: optBind(mode.entry, entryVal => entryVal.entryType === "strategic" ? opt(entryVal.selectedForEntry) : nullopt)
+                    selectedForExit: newSelectedForExit,
+                    selectedForEntry: optBind(newEntry, newEntryVal => newEntryVal.entryType === "strategic" ? opt(newEntryVal.selectedForEntry) : nullopt)
                   });
                 }
               }
@@ -1756,7 +1806,7 @@ function LocalReadyPool(props: {
                     contracts={
                       Array(readyPoolSize).fill(false)
                         .map((_false, iContract): InteractableSupplyContractData => {
-                          if (mode.entry.hasValue === false) return { productType: nullopt, opacity: "hidden", highlighted: false, clickable: false }; // TODO FIX hasValue should always be true
+                          if (mode.entry.hasValue === false) return { productType: nullopt, opacity: "hidden", highlighted: false, crossedOut: false, clickable: false }; // TODO FIX hasValue should always be true
                           const selectedForEntry =
                             (mode.entry.value.entryType === "simple")
                               ? iContract < mode.selectedForExit.filter(s => s).length
@@ -1766,68 +1816,13 @@ function LocalReadyPool(props: {
                             opacity:
                               selectedForEntry
                                 ? "visible"
-                                : (
-                                  hoveredContract.hasValue === true
-                                  && hoveredContract.value.section.section === "general enterable"
-                                  && hoveredContract.value.iContract === iContract
-                                )
-                                  ? "faded"
-                                  : "hidden",
-                            highlighted:
-                              hoveredContract.hasValue === true
-                              && (
-                                (selectedForEntry && hoveredContract.value.section.section === "general entering")
-                                || hoveredContract.value.section.section === "general enterable"
-                              )
-                              && hoveredContract.value.iContract === iContract,
-                            clickable: (selectedForEntry && mode.entry.value.entryType === "strategic" && iContract < mode.entry.value.selectedForEntry.generalPoolSelectedCount),
+                                : "hidden",
+                            highlighted: false,
+                            crossedOut: false,
+                            clickable: false,
                           };
                         })
                     }
-                    onClick={(e) => {
-                      if (mode.mode == "select for exit" && mode.entry.hasValue === true && mode.entry.value.entryType === "strategic") {
-                        if (e.iContract >= mode.entry.value.selectedForEntry.generalPoolSelectedCount) {
-                          console.log(`Bad iContract from general entering pool LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
-                          console.trace();
-                        } else {
-                          const newSelectedForEntry = {
-                            ...mode.entry.value.selectedForEntry,
-                            generalPoolSelectedCount: mode.entry.value.selectedForEntry.generalPoolSelectedCount - 1,
-                          };
-                          setModeState({
-                            ...mode,
-                            entry: opt({
-                              ...mode.entry.value,
-                              selectedForEntry: newSelectedForEntry,
-                            })
-                          });
-                          if (newSelectedForEntry.generalPoolSelectedCount == e.iContract) {
-                            setHoveredContract(nullopt); // this contract is about to disappear from this section
-                          }
-                          if (mode.onChange !== undefined) mode.onChange({
-                            selectedForExit: mode.selectedForExit,
-                            selectedForEntry: opt(newSelectedForEntry)
-                          });
-                        }
-                      }
-                    }}
-                    onHover={(e) => {
-                      if (e.iContract.hasValue === false) setHoveredContract(nullopt);
-                      else {
-                        if (mode.mode == "select for exit") {
-                          const iContractCurrentSelected = mode.selectedForExit[e.iContract.value];
-                          if (iContractCurrentSelected === undefined) {
-                            console.log(`Bad iContract from ready pool LocalReadyPoolSupplyContracts click event: ${e.iContract.value}`);
-                            console.trace();
-                          } else {
-                            setHoveredContract(opt({
-                              section: { section: "general entering" },
-                              iContract: e.iContract.value,
-                            }));
-                          }
-                        }
-                      }
-                    }}
                   />
                 </Section>
               )
@@ -1854,23 +1849,46 @@ function LocalReadyPool(props: {
                             hoveredContract.hasValue === true
                             && (hoveredContract.value.section.section === "exiting" || hoveredContract.value.section.section === "ready")
                             && hoveredContract.value.iContract === iContract,
+                          crossedOut: false,
                           clickable: s
                         };
                       })
                   }
                   onClick={(e) => {
-                    const iContractCurrentSelected = mode.selectedForExit[e.iContract];
-                    if (iContractCurrentSelected === undefined) {
+                    const iContractCurrentSelectedForExit = mode.selectedForExit[e.iContract];
+                    if (iContractCurrentSelectedForExit === undefined) {
                       console.log(`Bad iContract from exit LocalReadyPoolSupplyContracts click event: ${e.iContract}`);
                       console.trace();
                     } else {
-                      const newSelected = mode.selectedForExit.shallowCopy();
-                      newSelected[e.iContract] = !iContractCurrentSelected;
-                      setModeState({ ...mode, selectedForExit: newSelected });
+                      const newSelectedForExit = mode.selectedForExit.shallowCopy();
+                      newSelectedForExit[e.iContract] = !iContractCurrentSelectedForExit;
+
+                      const newEntry = optMap(mode.entry,
+                        modeEntryVal => {
+                          if (modeEntryVal.entryType === "simple") return modeEntryVal;
+
+                          const newNonGeneralPoolReadyCounts = (
+                            (modeEntryVal.selectedForEntry.recyclePoolSelectedCounts.reduce((a, b) => a + b))
+                            + (newSelectedForExit.filter(s => !s).length)
+                          );
+                          const newGeneralSelectedForEntry = Math.max(0, Math.min(readyPoolSize, readyPoolSize - newNonGeneralPoolReadyCounts));
+
+                          const newSelectedForEntry = {
+                            ...modeEntryVal.selectedForEntry,
+                            generalPoolSelectedCount: newGeneralSelectedForEntry,
+                          };
+                          return {
+                            ...modeEntryVal,
+                            selectedForEntry: newSelectedForEntry,
+                          }
+                        }
+                      );
+
+                      setModeState({ ...mode, selectedForExit: newSelectedForExit, entry: newEntry, });
                       setHoveredContract(nullopt); // this contract is about to disappear from this section
                       if (mode.onChange !== undefined) mode.onChange({
-                        selectedForExit: newSelected,
-                        selectedForEntry: optBind(mode.entry, entryVal => entryVal.entryType === "strategic" ? opt(entryVal.selectedForEntry) : nullopt),
+                        selectedForExit: newSelectedForExit,
+                        selectedForEntry: optBind(newEntry, newEntryVal => newEntryVal.entryType === "strategic" ? opt(newEntryVal.selectedForEntry) : nullopt),
                       });
                     }
                   }}
@@ -7039,7 +7057,7 @@ export default function MenuGame(props: MenuGameProps) {
                   </span>
                   <span>{" "}{props.settings.generalPoolContractCounts.get(p.type)}x</span>
                 </div>
-                <SupplyContract productType={opt(p.type)} highlighted={false} />
+                <SupplyContract productType={opt(p.type)} highlighted={false} crossedOut={false} />
               </div>
             ))
             .arr

@@ -8,6 +8,7 @@ export const illegalProductIcon = "⛓️";
 export const legalProductIcon = "✅";
 export const rareProductIcon = "✨";
 export const unknownProductIcon = "❓";
+export const crossOutIcon = "❌";
 export const moneyIcon = "💰";
 export const fineIcon = "🚨";
 export const recycleIcon = "🗑️";
