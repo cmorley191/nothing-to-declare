@@ -32,6 +32,18 @@ export function optAnd<T, U>(o1: Optional<T>, o2: Optional<U>): Optional<[T, U]>
   if (o1.hasValue === true && o2.hasValue === true) return opt([o1.value, o2.value]);
   else return nullopt;
 }
+export function optFromNullable<T>(v: T | null): Optional<T> {
+  if (v === null) return nullopt;
+  else return opt(v);
+}
+export function optFromUndefable<T>(v: T | undefined): Optional<T> {
+  if (v === undefined) return nullopt;
+  else return opt(v);
+}
+export function optFromNullableUndefable<T>(v: T | null | undefined): Optional<T> {
+  if (v === null || v === undefined) return nullopt;
+  else return opt(v);
+}
 
 export function omitAttrs(omit: string[], attrs: any): { [otherOptions: string]: unknown } {
   const result: any = {};

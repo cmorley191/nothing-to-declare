@@ -119,23 +119,22 @@ export type EntryVisaStamp = {
   x: number,
   y: number,
 };
+export type OfficerToolCrowbarState = {
+  useProgress: number
+};
 export type OfficerToolStampState = {
   offset: { x: number, y: number },
   stamps: EntryVisaStamp[],
   state: "not held" | "held" | "stamping",
 };
-export type OfficerToolState = Optional<
-  | {
-    tool: "crowbar",
-    useProgress: number
-  }
-  | {
-    tool: "stamp",
-    state: OfficerToolStampState,
-  }
->;
+export type OfficerToolsState = {
+  crowbar: Optional<OfficerToolCrowbarState>,
+  stamp: Optional<OfficerToolStampState>,
+};
 export interface ServerOfficerToolUpdateEventData {
-  newToolState: OfficerToolState
+  // optionals in state here are treated as "whether or not the state is updating",
+  // rather than "whether or not the tool is present"
+  toolsUpdates: OfficerToolsState,
 }
 
 export type ClientIdentifyEventData = ClientInfo;
@@ -167,7 +166,8 @@ export interface ClientCustomsActionEventData {
   | { action: "resume interrogation", iPlayerTrader: number }
   | { action: "pause interrogation" }
   | { action: "search cart" }
-  | { action: "ignore cart" }
+  | { action: "prepare tool", tool: "crowbar" | "stamp" }
+  | { action: "ignore cart", entryVisaStamps: EntryVisaStamp[] }
   | { action: "officer tool update", update: ServerOfficerToolUpdateEventData }
   // trader & officer actions:
   | { action: "propose deal", deal: IgnoreDeal }

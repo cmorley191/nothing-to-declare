@@ -1942,33 +1942,23 @@ function LocalReadyPool(props: {
 type CartContents =
   | { labeled: false, state: "no crate" | "open crate" | "closed crate" }
   | { labeled: true, state: "open crate" | "closed crate", count: number, productType: Optional<ProductType> }
-type CartOfficerToolsNotPresentState = {
-  present: false
-}
-type CartOfficerToolsPresentState = {
-  present: true,
-  state: NetworkTypes.OfficerToolState,
-}
-type CartOfficerTools =
-  | (
-    & (CartOfficerToolsPresentState)
-    & {
-      controls: {
-        localControllable: true,
-        onInternalOfficerToolUpdate: (event: { newToolState: NetworkTypes.OfficerToolState, sendUpdateNow: boolean }) => void,
-      }
+type CartOfficerToolsProps = {
+  crowbarPresent: boolean,
+  stampPresent: boolean,
+  controls: (
+    | {
+      localControllable: true,
+      onInternalOfficerToolUpdate: (event: { toolsUpdates: NetworkTypes.OfficerToolsState, sendUpdateNow: boolean }) => void,
     }
-  )
-  | (
-    & (CartOfficerToolsPresentState | CartOfficerToolsNotPresentState)
-    & {
-      controls: {
-        localControllable: false,
-        registerEventHandlers: (args: { onExternalOfficerToolUpdate: (event: { newToolState: NetworkTypes.OfficerToolState }) => void }) => { handlerRegistrationId: number },
+    | {
+      localControllable: false,
+      eventHandling?: {
+        registerEventHandlers: (args: { onExternalOfficerToolUpdate: (event: { newToolsState: NetworkTypes.OfficerToolsState }) => void }) => { handlerRegistrationId: number },
         unregisterEventHandlers: (handlerRegistrationId: number) => void,
       }
     }
   )
+}
 
 /**
  * (React hook) Provides an interface with cart officer tools and the corresponding server update events.
@@ -1976,13 +1966,13 @@ type CartOfficerTools =
  * Caller provides a TDragState state type to capture the current state of the tool(s) being rendered.
  */
 function useNetworkedOfficerToolState<TLocalState>(args: {
-  propsTools: CartOfficerTools,
+  propsTools: CartOfficerToolsProps,
   // if animationFunction options change make sure to update "calculate..." to emulate the functions
   networkStateToLocalState: (args: {
-    networkState: NetworkTypes.OfficerToolState,
+    networkState: Optional<NetworkTypes.OfficerToolsState>,
     previousState: Optional<TLocalState>,
   }) => Optional<{ state: TLocalState, animateTransition: "always" | "if existing" | "never" }>,
-  localStateToNetworkState: (localState: TLocalState) => NetworkTypes.OfficerToolState,
+  localStateToNetworkStateUpdate: (localState: TLocalState) => NetworkTypes.OfficerToolsState,
   stateIsOfficerControllable: (localState: TLocalState) => boolean,
   statesEqual: (a: TLocalState, b: TLocalState) => boolean,
   getMouseDownState: (args: {
@@ -2022,10 +2012,10 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
       destLocalState: TLocalState,
     }>
   }>>(
-    args.propsTools.present == false
+    (args.propsTools.crowbarPresent === false && args.propsTools.stampPresent === false)
       ? nullopt
       : optMap(
-        args.networkStateToLocalState({ networkState: args.propsTools.state, previousState: nullopt }),
+        args.networkStateToLocalState({ networkState: nullopt, previousState: nullopt }),
         localState => ({
           mouse: { down: false },
           localState: localState.state,
@@ -2035,6 +2025,7 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
   );
 
   const onMouseDownUpHandler = (funcArgs: { event: MouseEvent, downEvent: boolean }) => {
+    if (args.propsTools.crowbarPresent === false && args.propsTools.stampPresent === false) return;
     const controls = args.propsTools.controls;
     if (
       controls.localControllable == false
@@ -2092,7 +2083,7 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
 
       if (!currentEqualsNew) {
         controls.onInternalOfficerToolUpdate({
-          newToolState: args.localStateToNetworkState(newLocalState.state),
+          toolsUpdates: args.localStateToNetworkStateUpdate(newLocalState.state),
           sendUpdateNow: newLocalState.sendUpdateNow,
         });
       }
@@ -2121,70 +2112,76 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
   }
 
   React.useEffect(() => {
+    if (args.propsTools.crowbarPresent === false && args.propsTools.stampPresent === false) return;
     const controls = args.propsTools.controls;
     if (controls.localControllable == false) {
-      const { handlerRegistrationId } = controls.registerEventHandlers({
-        onExternalOfficerToolUpdate: (event) => {
-          if (localData.hasValue == true && !(args.stateIsOfficerControllable(localData.value.localState))) {
-            return;
-          }
+      const eventHandling = controls.eventHandling;
+      if (eventHandling !== undefined) {
+        const { handlerRegistrationId } = eventHandling.registerEventHandlers({
+          onExternalOfficerToolUpdate: (event) => {
+            if (localData.hasValue == true && !(args.stateIsOfficerControllable(localData.value.localState))) {
+              return;
+            }
 
-          const eventTime = Date.now();
-          setLocalData(() => {
-            const newLocalStateOpt = args.networkStateToLocalState({ networkState: event.newToolState, previousState: optMap(localData, localData => localData.localState) });
-            return optMap(newLocalStateOpt,
-              newLocalState => {
-                if (localData.hasValue == false) {
-                  return {
-                    mouse: { down: false }, // arbitrary -- this won't be used since localControllable false
-                    localState: newLocalState.state,
-                    animation: nullopt,
-                  };
-                } else {
-                  if (localData.value.animation.hasValue === true && args.statesEqual(newLocalState.state, localData.value.animation.value.destLocalState)) {
+            const eventTime = Date.now();
+            setLocalData(() => {
+              const newLocalStateOpt = args.networkStateToLocalState({ networkState: opt(event.newToolsState), previousState: optMap(localData, localData => localData.localState) });
+              return optMap(newLocalStateOpt,
+                newLocalState => {
+                  if (localData.hasValue == false) {
                     return {
-                      ...localData.value,
-                      animation: opt({
-                        ...localData.value.animation.value,
-                        destLocalState: newLocalState.state,
-                      })
-                    }
-                  }
-
-                  const currentLocalState = (
-                    (localData.value.animation.hasValue == false)
-                      ? localData.value.localState
-                      : getInterruptedAnimationState({
-                        interruptMs: eventTime,
-                        animationStartTimeMs: localData.value.animation.value.animationStartTimeMs,
-                        startState: localData.value.localState,
-                        endState: localData.value.animation.value.destLocalState,
-                      })
-                  );
-
-                  if (!args.statesEqual(currentLocalState, newLocalState.state) && (newLocalState.animateTransition === "always" || (newLocalState.animateTransition === "if existing" && localData.value.animation.hasValue))) {
-                    return {
-                      mouse: { down: false }, // won't be used
-                      localState: currentLocalState,
-                      animation: opt({
-                        animationStartTimeMs: eventTime,
-                        destLocalState: newLocalState.state,
-                      }),
-                    };
-                  } else {
-                    return {
-                      ...localData.value,
+                      mouse: { down: false }, // arbitrary -- this won't be used since localControllable false
                       localState: newLocalState.state,
                       animation: nullopt,
                     };
+                  } else {
+                    if (localData.value.animation.hasValue === true && args.statesEqual(newLocalState.state, localData.value.animation.value.destLocalState)) {
+                      return {
+                        ...localData.value,
+                        animation: opt({
+                          ...localData.value.animation.value,
+                          destLocalState: newLocalState.state,
+                        })
+                      }
+                    }
+
+                    const currentLocalState = (
+                      (localData.value.animation.hasValue == false)
+                        ? localData.value.localState
+                        : getInterruptedAnimationState({
+                          interruptMs: eventTime,
+                          animationStartTimeMs: localData.value.animation.value.animationStartTimeMs,
+                          startState: localData.value.localState,
+                          endState: localData.value.animation.value.destLocalState,
+                        })
+                    );
+
+                    if (!args.statesEqual(currentLocalState, newLocalState.state) && (newLocalState.animateTransition === "always" || (newLocalState.animateTransition === "if existing" && localData.value.animation.hasValue))) {
+                      return {
+                        mouse: { down: false }, // won't be used
+                        localState: currentLocalState,
+                        animation: opt({
+                          animationStartTimeMs: eventTime,
+                          destLocalState: newLocalState.state,
+                        }),
+                      };
+                    } else {
+                      return {
+                        ...localData.value,
+                        localState: newLocalState.state,
+                        animation: nullopt,
+                      };
+                    }
                   }
                 }
-              }
-            );
-          });
-        }
-      });
-      return () => { controls.unregisterEventHandlers(handlerRegistrationId); }
+              );
+            });
+          }
+        });
+        return () => { eventHandling.unregisterEventHandlers(handlerRegistrationId); }
+      } else {
+        return;
+      }
 
     } else { // localControllable == true
       const onWindowMouseUpListener = (event: MouseEvent) => { onMouseDownUpHandler({ event, downEvent: false }); };
@@ -2230,7 +2227,7 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
 
           if (!currentEqualsNew) {
             controls.onInternalOfficerToolUpdate({
-              newToolState: args.localStateToNetworkState(newLocalState.state),
+              toolsUpdates: args.localStateToNetworkStateUpdate(newLocalState.state),
               sendUpdateNow: newLocalState.sendUpdateNow,
             });
           }
@@ -2289,7 +2286,7 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
  */
 function AnimatedCart(props: {
   contents: CartContents,
-  officerTools: CartOfficerTools,
+  officerTools: CartOfficerToolsProps,
   animation: Optional<{
     animation: "blast lid" | "open lid" | "close lid",
     onComplete: Optional<() => void>,
@@ -2301,7 +2298,7 @@ function AnimatedCart(props: {
   const currentRenderTimeMs = Date.now();
 
   const crowbarDragDistanceRequired = 400;
-  const crowbarUpdateAnimationFunction = "linear" as "linear";
+  const crowbarUpdateAnimationFunction = "linear";
 
   const {
     localData: crowbarDragData,
@@ -2309,41 +2306,65 @@ function AnimatedCart(props: {
     toolUpdateAnimationDurationMs: crowbarUpdateAnimationDurationMs,
     onAnimationComplete: onCrowbarAnimationComplete,
   } = (
-      useNetworkedOfficerToolState<number>({
+      useNetworkedOfficerToolState<{ crowbar: NetworkTypes.OfficerToolCrowbarState, stamp: Optional<OfficerToolStampState> }>({
         propsTools: props.officerTools,
         networkStateToLocalState({ networkState }) {
-          return optBind(
-            networkState,
-            toolState =>
-              (toolState.tool === "crowbar")
-                ? opt({ state: toolState.useProgress, animateTransition: "always" })
-                : nullopt,
+          if (networkState.hasValue === true && networkState.value.crowbar.hasValue === true) {
+            return opt({
+              state: {
+                crowbar: networkState.value.crowbar.value,
+                stamp: networkState.value.stamp,
+              },
+              animateTransition: "always",
+            });
+          } else if (props.officerTools.crowbarPresent) {
+            return opt({
+              animateTransition: "always",
+              state: {
+                crowbar: { useProgress: 0 },
+                stamp:
+                  (networkState.hasValue === true)
+                    ? networkState.value.stamp
+                    : nullopt, // stamp state is fairly unused by AnimatedCart; can be whatever on the very first interrogation state
+              },
+            });
+          } else {
+            return nullopt;
+          }
+        },
+        localStateToNetworkStateUpdate(localState) {
+          return {
+            crowbar: opt(localState.crowbar),
+            stamp: nullopt, // do not update stamp from AnimatedCart
+          };
+        },
+
+        stateIsOfficerControllable(localState) {
+          return (
+            localState.crowbar.useProgress < 1
+            && (
+              localState.stamp.hasValue === false
+              || (
+                localState.stamp.value.stamps.length === 0
+                && localState.stamp.value.state !== "stamping"
+              )
+            )
           );
         },
-        localStateToNetworkState(localUseProgress) {
-          return opt({
-            tool: "crowbar",
-            useProgress: localUseProgress,
-          })
-        },
 
-        stateIsOfficerControllable(localUseProgress) {
-          return localUseProgress < 1
-        },
-
-        statesEqual(localUseProgressA, localUseProgressB) {
-          return localUseProgressA == localUseProgressB;
+        statesEqual(localStateA, localStateB) {
+          return localStateA.crowbar.useProgress == localStateB.crowbar.useProgress;
         },
 
         getMouseDownState(args) { return { state: args.previousState, animateTransition: "never", sendUpdateNow: false } },
-        getMouseUpState(_args) { return { state: 0, animateTransition: "always", sendUpdateNow: true } },
+        getMouseUpState(args) { return { state: { ...args.previousState, crowbar: { useProgress: 0 } }, animateTransition: "always", sendUpdateNow: true } },
 
         getMouseMoveState(args) {
           // translates mouse drag pixels [0,400] to crowbar drag progress [0,1] using a log function, 
           // i.e. mouse drag provides more progress at the starting range (e.g. [0,100]) than the ending
           // See on wolfram alpha: "log2(1 + (x/10)) / log2(40) from x = -20 to x = 400"
           if (args.mouseDownPosition.hasValue === false) {
-            return { state: 0, animateTransition: "never", sendUpdateNow: false, };
+            return { state: { ...args.previousState, crowbar: { useProgress: 0 } }, animateTransition: "never", sendUpdateNow: false, };
           } else {
             const state = (
               Math.min(1, Math.max(0,
@@ -2352,7 +2373,7 @@ function AnimatedCart(props: {
               ))
             );
             return {
-              state: isNaN(state) ? 0 : state,
+              state: { ...args.previousState, crowbar: { useProgress: isNaN(state) ? 0 : state } },
               animateTransition: "never",
               sendUpdateNow: state === 1,
             };
@@ -2361,11 +2382,20 @@ function AnimatedCart(props: {
 
         animationFunction: crowbarUpdateAnimationFunction,
         getInterruptedAnimationState(args) {
-          return args.startState + (args.animationProgress * (args.endState - args.startState));
+          return {
+            ...args.endState,
+            crowbar: {
+              useProgress:
+                args.startState.crowbar.useProgress
+                + (
+                  args.animationProgress
+                  * (args.endState.crowbar.useProgress - args.startState.crowbar.useProgress)
+                ),
+            },
+          };
         },
       })
     );
-
 
   const crowbarStartRotateDeg = -103;
   const crowbarEndRotateDeg = -45;
@@ -2432,7 +2462,7 @@ function AnimatedCart(props: {
         <img
           src={cartLidImgSrc}
           style={{
-            opacity: props.animation.hasValue == true || crowbarDragData.hasValue == true ? 1 : 0,
+            opacity: (props.animation.hasValue == true || crowbarDragData.hasValue === true) ? 1 : 0,
             position: "absolute",
             left: 0,
             top: 0,
@@ -2479,57 +2509,69 @@ function AnimatedCart(props: {
           to={{ left: 0 }}
         />
 
-        <img
-          src={crowbarImgSrc}
-          draggable={false} // just prevents mouse events from being suppressed by drag events
-          onMouseDown={(event) => { onCrowbarMouseDownHandler(event.nativeEvent); }}
-          style={{
-            opacity: crowbarDragData.hasValue == true ? 1 : 0,
-            position: "absolute",
-            left: "52px",
-            top: "2px",
-            width: "50%",
-            zIndex: 2,
-            rotate: (crowbarDragData.hasValue == true && crowbarDragData.value.animation.hasValue == false)
-              ? dragProgressToStyleDegString(crowbarDragData.value.localState)
-              : undefined,
-            animationName: (crowbarDragData.hasValue == true && crowbarDragData.value.animation.hasValue == true)
-              ? (
-                `cart_crowbar_animation`
-                + `_${dragProgressToStyleDegString(crowbarDragData.value.localState)}`
-                + `_${dragProgressToStyleDegString(crowbarDragData.value.animation.value.destLocalState)}`
-              )
-              : undefined,
-            animationDuration: `${crowbarUpdateAnimationDurationMs}ms`,
-            animationIterationCount: 1,
-            animationTimingFunction: crowbarUpdateAnimationFunction,
-            animationFillMode: "both",
-            animationDirection: "normal",
-            animationDelay: `${Math.floor(
-              (crowbarDragData.hasValue == false || crowbarDragData.value.animation.hasValue == false)
-                ? 0
-                : (-Math.min( // negative delay starts animation in middle of animation
-                  (currentRenderTimeMs - crowbarDragData.value.animation.value.animationStartTimeMs),
-                  crowbarUpdateAnimationDurationMs
-                ))
-            )}ms`,
-            transformOrigin: "5% 8%",
-          }}
-          onAnimationEnd={onCrowbarAnimationComplete}
-        />
-
-        { // crowbar animation Keyframes
-          (crowbarDragData.hasValue == true && crowbarDragData.value.animation.hasValue == true)
+        {
+          (crowbarDragData.hasValue === true)
             ? (
-              <Keyframes
-                name={
-                  `cart_crowbar_animation`
-                  + `_${dragProgressToStyleDegString(crowbarDragData.value.localState)}`
-                  + `_${dragProgressToStyleDegString(crowbarDragData.value.animation.value.destLocalState)}`
+              <div
+                draggable={false}
+                onMouseDown={(event) => { onCrowbarMouseDownHandler(event.nativeEvent); }}
+                style={{
+                  position: "absolute",
+                  left: "52px",
+                  top: "2px",
+                  width: "50%",
+                  zIndex: 2,
+                  rotate: (crowbarDragData.value.animation.hasValue == false)
+                    ? dragProgressToStyleDegString(crowbarDragData.value.localState.crowbar.useProgress)
+                    : undefined,
+                  animationName: (crowbarDragData.value.animation.hasValue == true)
+                    ? (
+                      `cart_crowbar_animation`
+                      + `_${dragProgressToStyleDegString(crowbarDragData.value.localState.crowbar.useProgress)}`
+                      + `_${dragProgressToStyleDegString(crowbarDragData.value.animation.value.destLocalState.crowbar.useProgress)}`
+                    )
+                    : undefined,
+                  animationDuration: `${crowbarUpdateAnimationDurationMs}ms`,
+                  animationIterationCount: 1,
+                  animationTimingFunction: crowbarUpdateAnimationFunction,
+                  animationFillMode: "both",
+                  animationDirection: "normal",
+                  animationDelay: `${Math.floor(
+                    (crowbarDragData.value.animation.hasValue == false)
+                      ? 0
+                      : (-Math.min( // negative delay starts animation in middle of animation
+                        (currentRenderTimeMs - crowbarDragData.value.animation.value.animationStartTimeMs),
+                        crowbarUpdateAnimationDurationMs
+                      ))
+                  )}ms`,
+                  transformOrigin: "5% 8%",
+                }}
+                onAnimationEnd={onCrowbarAnimationComplete}
+              >
+                <img
+                  src={crowbarImgSrc}
+                  draggable={false}
+                  style={{
+                    maxWidth: "100%",
+                  }}
+                />
+
+                { // crowbar animation Keyframes
+                  (crowbarDragData.value.animation.hasValue == true)
+                    ? (
+                      <Keyframes
+                        name={
+                          `cart_crowbar_animation`
+                          + `_${dragProgressToStyleDegString(crowbarDragData.value.localState.crowbar.useProgress)}`
+                          + `_${dragProgressToStyleDegString(crowbarDragData.value.animation.value.destLocalState.crowbar.useProgress)}`
+                        }
+                        from={{ rotate: dragProgressToStyleDegString(crowbarDragData.value.localState.crowbar.useProgress) }}
+                        to={{ rotate: dragProgressToStyleDegString(crowbarDragData.value.animation.value.destLocalState.crowbar.useProgress) }}
+                      />
+                    )
+                    : undefined
                 }
-                from={{ rotate: dragProgressToStyleDegString(crowbarDragData.value.localState) }}
-                to={{ rotate: dragProgressToStyleDegString(crowbarDragData.value.animation.value.destLocalState) }}
-              />
+              </div>
             )
             : undefined
         }
@@ -2571,7 +2613,7 @@ function FloatingAnimatedCart(props: {
   iPlayerLocal: ValidPlayerIndex,
   active: boolean,
   contents: CartContents,
-  officerTools: CartOfficerTools,
+  officerTools: CartOfficerToolsProps,
   animation: Optional<GameAnimationSequence>,
   [otherOptions: string]: unknown
 }) {
@@ -2728,22 +2770,11 @@ function FloatingAnimatedCart(props: {
                   (preAnimationStepState.crateState == "lid closed" && postAnimationStepState.crateState == "lid blasted")
                     // while lid is blasting make a fully used crowbar present. make non-controllable and we expect no external updates
                     ? {
-                      present: true,
-                      state: opt({ tool: "crowbar", useProgress: 1 }),
-                      controls: {
-                        localControllable: false,
-                        registerEventHandlers: (_args) => ({ handlerRegistrationId: -1 }),
-                        unregisterEventHandlers: (_args) => { }
-                      }
+                      ...props.officerTools,
+                      crowbarPresent: true,
+                      controls: { localControllable: false }
                     }
-                    : {
-                      present: false,
-                      controls: {
-                        localControllable: false,
-                        registerEventHandlers: (_args) => ({ handlerRegistrationId: -1 }),
-                        unregisterEventHandlers: (_args) => { }
-                      },
-                    }
+                    : props.officerTools
                 }
               />
               <span id={`${getStaticCartEleId({ location: props.location, iPlayerOwner: props.iPlayerOwner })}_floating_section_product_cart_interior_reference`}
@@ -3094,6 +3125,8 @@ export default function MenuGame(props: MenuGameProps) {
                 customsState: "interrogating",
                 iPlayerActiveTrader: clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader,
                 proposedDeal: clientGameState.proposedDeal,
+                crowbarSelected: clientGameState.crowbarSelected,
+                entryVisaVisible: clientGameState.entryVisaVisible,
               }
             )
           )
@@ -3125,7 +3158,9 @@ export default function MenuGame(props: MenuGameProps) {
     }
   }
 
-  const onExternalOfficerToolUpdateRegistrations: Optional<(event: { update: NetworkTypes.ServerOfficerToolUpdateEventData }) => void>[] = [];
+  const toolsStateRef = React.useRef<NetworkTypes.OfficerToolsState>({ crowbar: nullopt, stamp: nullopt });
+  const onExternalOfficerToolUpdateRegistrations: Optional<(event: { newToolsState: NetworkTypes.OfficerToolsState }) => void>[] = [];
+  //const onInternalOfficerToolUpdateRegistrations: Optional<(event: { update: NetworkTypes.ServerOfficerToolUpdateEventData }) => void>[] = [];
   const clientHandleReceivedServerEvent = function (event: NetworkTypes.ServerEvent) {
     //console.log(event);
     const hostClientId = props.hostInfo.localHost == true ? props.localInfo.clientId : props.hostInfo.hostClientId;
@@ -3150,6 +3185,20 @@ export default function MenuGame(props: MenuGameProps) {
         break;
 
       case NetworkTypes.ServerEventType.STATE_UPDATE: {
+        if (clientGameState.state === "Customs"
+          && clientGameState.customsState != "ready"
+          && !(
+            event.data.state.state === "Customs"
+            && event.data.state.customsState != "ready"
+          )
+        ) {
+          // reset tools
+          toolsStateRef.current = {
+            crowbar: nullopt,
+            stamp: nullopt,
+          };
+        }
+
         // convert [new server state + current client state] to new client state
         switch (event.data.state.state) {
           case "StrategicSwapPack":
@@ -3419,6 +3468,8 @@ export default function MenuGame(props: MenuGameProps) {
                           ? clientGameState.interrogatingState
                           : "cart entering",
                       proposedDeal: event.data.state.proposedDeal,
+                      crowbarSelected: event.data.state.crowbarSelected,
+                      entryVisaVisible: event.data.state.entryVisaVisible,
                       ...(
                         (iPlayerToNum(iPlayerLocal) == iPlayerToNum(eventIPlayerOfficer.value))
                           ? {
@@ -3441,7 +3492,7 @@ export default function MenuGame(props: MenuGameProps) {
                               iPlayerActiveTrader: eventIPlayerActiveTrader.value
                             }
                           )
-                      )
+                      ),
                     };
                   case "resolving":
                     // Server isn't supposed to send a new 'resolving' state update during the middle of 'resolving' state.
@@ -3519,7 +3570,17 @@ export default function MenuGame(props: MenuGameProps) {
       } break;
 
       case NetworkTypes.ServerEventType.OFFICER_TOOL_UPDATE: {
-        onExternalOfficerToolUpdateRegistrations.forEach(c => { if (c.hasValue == true) c.value({ update: event.data }) });
+        if (event.data.toolsUpdates.crowbar.hasValue) {
+          toolsStateRef.current = { ...toolsStateRef.current, crowbar: event.data.toolsUpdates.crowbar }
+        }
+        if (event.data.toolsUpdates.stamp.hasValue) {
+          toolsStateRef.current = { ...toolsStateRef.current, stamp: event.data.toolsUpdates.stamp }
+        }
+        onExternalOfficerToolUpdateRegistrations.forEach(c => {
+          if (c.hasValue == true) c.value({
+            newToolsState: toolsStateRef.current
+          })
+        });
       } break;
     }
   }
@@ -3853,10 +3914,16 @@ export default function MenuGame(props: MenuGameProps) {
                 cartStates: serverGameState.cartStates.arr,
                 customsState: "interrogating",
                 iPlayerActiveTrader: eventIPlayerTrader.value.value,
-                proposedDeal: nullopt
+                proposedDeal: nullopt,
+                crowbarSelected: false,
+                entryVisaVisible: false,
               });
             } else if (serverGameState.customsState == "interrogating") {
-              if (event.data.action.action == "resume interrogation") {
+              if (event.data.action.action == "resume interrogation"
+                || event.data.action.action == "resolve confirmation ready"
+                || event.data.action.action == "confirm resolve"
+                || event.data.action.action == "resolve completed"
+              ) {
                 handleUnexpectedState();
                 return nullopt;
               } else if (event.data.action.action == "pause interrogation") {
@@ -3884,7 +3951,7 @@ export default function MenuGame(props: MenuGameProps) {
                   proposedDeal: opt({
                     ...event.data.action.deal,
                     waitingOnOfficer: iPlayerToNum(serverGameState.iPlayerOfficer) != iPlayerToNum(iPlayerEvent)
-                  })
+                  }),
                 });
               } else if (event.data.action.action == "reject deal") {
                 if (
@@ -3897,13 +3964,22 @@ export default function MenuGame(props: MenuGameProps) {
                   return opt({
                     ...serverGameState,
                     traderSupplies: serverGameState.traderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
-                    counters: serverGameState.counters,
                     iPlayerOfficer: serverGameState.iPlayerOfficer.value,
                     iPlayerActiveTrader: serverGameState.iPlayerActiveTrader.value,
                     cartStates: serverGameState.cartStates.arr,
-                    proposedDeal: nullopt
+                    proposedDeal: nullopt,
                   });
                 }
+              } else if (event.data.action.action == "prepare tool") {
+                return opt({
+                  ...serverGameState,
+                  traderSupplies: serverGameState.traderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr })),
+                  iPlayerOfficer: serverGameState.iPlayerOfficer.value,
+                  iPlayerActiveTrader: serverGameState.iPlayerActiveTrader.value,
+                  cartStates: serverGameState.cartStates.arr,
+                  crowbarSelected: serverGameState.crowbarSelected || event.data.action.tool === "crowbar",
+                  entryVisaVisible: serverGameState.entryVisaVisible || event.data.action.tool === "stamp",
+                });
               } else { // ignore cart, search cart, or accept deal
                 return opt({
                   state: "Customs",
@@ -3953,7 +4029,7 @@ export default function MenuGame(props: MenuGameProps) {
                           })(),
                           resultState: { resultState: "searching" },
                         }
-                        : { result: "ignored", resultState: { resultState: "continuing" } }
+                        : { result: "ignored", resultState: { resultState: "continuing", entryVisaStamps: event.data.action.entryVisaStamps } }
                   )
                 })
               }
@@ -4806,6 +4882,8 @@ export default function MenuGame(props: MenuGameProps) {
 
   console.log(JSON.stringify(animation));
 
+
+
   return (
     <div id="menu_game">
       <Section id="menu_game_title">
@@ -4984,14 +5062,7 @@ export default function MenuGame(props: MenuGameProps) {
                                 }
                               }
                             })()}
-                            officerTools={{
-                              present: false,
-                              controls: {
-                                localControllable: false,
-                                registerEventHandlers: (_args) => ({ handlerRegistrationId: -1 }),
-                                unregisterEventHandlers: (_args) => { }
-                              }
-                            }}
+                            officerTools={{ crowbarPresent: false, stampPresent: false, controls: { localControllable: false } }}
                           />
                         </div>
                       )
@@ -5198,95 +5269,105 @@ export default function MenuGame(props: MenuGameProps) {
                           contents={cartContents}
                           animation={animation}
                           officerTools={(
-                            (iPlayerToNum(iPlayerLocal) == iPlayerToNum(iPlayerOfficer) && active && clientGameState.state == "Customs")
-                              ? {
-                                present: true,
-                                state: opt({ tool: "crowbar", useProgress: 0 }),
-                                controls: {
-                                  localControllable: true,
-                                  onInternalOfficerToolUpdate: (() => {
-                                    // buffer these events to avoid spamming server
-                                    let newUpdateToSend: NetworkTypes.OfficerToolState = nullopt;
-                                    let sendState: (
-                                      | { queued: false, lastSendTimeMs: number }
-                                      | { queued: true, timeout: NodeJS.Timeout }
-                                    ) =
-                                      { queued: false, lastSendTimeMs: 0 };
-                                    let fullyUsedCrowbarEventSent = false;
-                                    const sendTheNewToolStateToSend = () => {
-                                      const sendingUpdate = newUpdateToSend;
-                                      sendState = { queued: false, lastSendTimeMs: Date.now() };
+                            (!(
+                              active
+                              && clientGameState.state == "Customs"
+                              && clientGameState.customsState === "interrogating"
+                            ))
+                              ? { crowbarPresent: false, stampPresent: false, controls: { localControllable: false } }
+                              : (clientGameState.crowbarSelected === false)
+                                ? {
+                                  crowbarPresent: false,
+                                  stampPresent: clientGameState.entryVisaVisible,
+                                  controls: { localControllable: false }
+                                }
+                                : {
+                                  crowbarPresent: true,
+                                  stampPresent: clientGameState.entryVisaVisible,
+                                  controls:
+                                    (iPlayerToNum(iPlayerLocal) === iPlayerToNum(iPlayerOfficer))
+                                      ? {
+                                        localControllable: true,
+                                        onInternalOfficerToolUpdate: (() => {
+                                          // buffer these events to avoid spamming server
+                                          let newUpdateToSend: Optional<NetworkTypes.OfficerToolsState> = nullopt;
+                                          let sendState: (
+                                            | { queued: false, lastSendTimeMs: number }
+                                            | { queued: true, timeout: NodeJS.Timeout }
+                                          ) =
+                                            { queued: false, lastSendTimeMs: 0 };
+                                          let fullyUsedCrowbarEventSent = false;
+                                          const sendTheNewToolStateToSend = () => {
+                                            const sendingUpdate = newUpdateToSend;
+                                            sendState = { queued: false, lastSendTimeMs: Date.now() };
+                                            if (sendingUpdate.hasValue === false) return;
 
-                                      if (!fullyUsedCrowbarEventSent) {
-                                        clientSendClientEventToServer({
-                                          type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
-                                          data: {
-                                            sourceClientId: props.localInfo.clientId,
-                                            action: {
-                                              action: "officer tool update",
-                                              update: {
-                                                newToolState: sendingUpdate,
+                                            if (!fullyUsedCrowbarEventSent) {
+                                              clientSendClientEventToServer({
+                                                type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
+                                                data: {
+                                                  sourceClientId: props.localInfo.clientId,
+                                                  action: {
+                                                    action: "officer tool update",
+                                                    update: {
+                                                      toolsUpdates: sendingUpdate.value,
+                                                    }
+                                                  }
+                                                }
+                                              });
+
+                                              if (sendingUpdate.value.crowbar.hasValue === true
+                                                && sendingUpdate.value.crowbar.value.useProgress >= 1
+                                              ) {
+                                                fullyUsedCrowbarEventSent = true;
+                                                clientSendClientEventToServer({
+                                                  type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
+                                                  data: {
+                                                    sourceClientId: props.localInfo.clientId,
+                                                    action: {
+                                                      action: "search cart"
+                                                    }
+                                                  }
+                                                });
                                               }
                                             }
-                                          }
-                                        });
-
-                                        if (sendingUpdate.hasValue == true
-                                          && sendingUpdate.value.tool == "crowbar"
-                                          && sendingUpdate.value.useProgress >= 1
-                                        ) {
-                                          fullyUsedCrowbarEventSent = true;
-                                          clientSendClientEventToServer({
-                                            type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
-                                            data: {
-                                              sourceClientId: props.localInfo.clientId,
-                                              action: {
-                                                action: "search cart"
-                                              }
-                                            }
-                                          });
-                                        }
-                                      }
-                                    };
-
-                                    return (event) => {
-                                      newUpdateToSend = event.newToolState;
-                                      if (event.sendUpdateNow) {
-                                        if (sendState.queued === true) {
-                                          clearTimeout(sendState.timeout);
-                                        }
-                                        sendTheNewToolStateToSend();
-                                      } else if (sendState.queued == false) {
-                                        const minimumRepeatSendIntervalMs = officerToolUpdateMinIntervalMs;
-                                        const intervalSinceLastSend = Date.now() - sendState.lastSendTimeMs;
-                                        if (intervalSinceLastSend < minimumRepeatSendIntervalMs && !event.sendUpdateNow) {
-                                          sendState = {
-                                            queued: true,
-                                            timeout: setTimeout(sendTheNewToolStateToSend, (minimumRepeatSendIntervalMs - intervalSinceLastSend))
                                           };
-                                        } else {
-                                          sendTheNewToolStateToSend();
+
+                                          return (event) => {
+                                            newUpdateToSend = opt(event.toolsUpdates);
+                                            if (event.sendUpdateNow) {
+                                              if (sendState.queued === true) {
+                                                clearTimeout(sendState.timeout);
+                                              }
+                                              sendTheNewToolStateToSend();
+                                            } else if (sendState.queued == false) {
+                                              const minimumRepeatSendIntervalMs = officerToolUpdateMinIntervalMs;
+                                              const intervalSinceLastSend = Date.now() - sendState.lastSendTimeMs;
+                                              if (intervalSinceLastSend < minimumRepeatSendIntervalMs && !event.sendUpdateNow) {
+                                                sendState = {
+                                                  queued: true,
+                                                  timeout: setTimeout(sendTheNewToolStateToSend, (minimumRepeatSendIntervalMs - intervalSinceLastSend))
+                                                };
+                                              } else {
+                                                sendTheNewToolStateToSend();
+                                              }
+                                            }
+                                          };
+                                        })()
+                                      }
+                                      : {
+                                        localControllable: false,
+                                        eventHandling: {
+                                          registerEventHandlers: (args) => {
+                                            onExternalOfficerToolUpdateRegistrations.push(opt(args.onExternalOfficerToolUpdate));
+                                            return { handlerRegistrationId: onExternalOfficerToolUpdateRegistrations.length - 1 };
+                                          },
+                                          unregisterEventHandlers: (handlerRegistrationId) => {
+                                            onExternalOfficerToolUpdateRegistrations[handlerRegistrationId] = nullopt;
+                                          },
                                         }
                                       }
-                                    };
-                                  })()
                                 }
-                              }
-                              : {
-                                present: false,
-                                controls: {
-                                  localControllable: false,
-                                  registerEventHandlers: (args) => {
-                                    onExternalOfficerToolUpdateRegistrations.push(opt((event) => {
-                                      args.onExternalOfficerToolUpdate(event.update);
-                                    }));
-                                    return { handlerRegistrationId: onExternalOfficerToolUpdateRegistrations.length - 1 };
-                                  },
-                                  unregisterEventHandlers: (handlerRegistrationId) => {
-                                    onExternalOfficerToolUpdateRegistrations[handlerRegistrationId] = nullopt;
-                                  },
-                                }
-                              }
                           )}
                         />
                       </Section>
@@ -5300,6 +5381,7 @@ export default function MenuGame(props: MenuGameProps) {
                           animation={animation}
                         />
                       </div>
+
                       <div id="menu_game_working_center_customs_cart_buttons">
                         {
                           (() => {
@@ -5329,24 +5411,45 @@ export default function MenuGame(props: MenuGameProps) {
                             } else { // Customs
                               return (
                                 <div hidden={clientGameState.customsState == "resolving"}>
-                                  <div>Search the crate (pull crowbar)</div>
                                   <div>
-                                    <span style={{ display: "inline-block" }}>or{" "}</span>
                                     <button
                                       style={{ display: "inline-block" }}
+                                      disabled={clientGameState.customsState !== "interrogating" || clientGameState.crowbarSelected === true}
                                       onClick={() => {
                                         clientSendClientEventToServer({
                                           type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
                                           data: {
                                             sourceClientId: props.localInfo.clientId,
                                             action: {
-                                              action: "ignore cart"
+                                              action: "prepare tool",
+                                              tool: "crowbar",
                                             }
                                           }
                                         });
                                       }}
                                     >
-                                      Allow Through Without Search
+                                      Prepare Crowbar for Search
+                                    </button>
+                                  </div>
+                                  <div>
+                                    <span style={{ display: "inline-block" }}>or{" "}</span>
+                                    <button
+                                      style={{ display: "inline-block" }}
+                                      disabled={clientGameState.customsState !== "interrogating" || clientGameState.entryVisaVisible === true}
+                                      onClick={() => {
+                                        clientSendClientEventToServer({
+                                          type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
+                                          data: {
+                                            sourceClientId: props.localInfo.clientId,
+                                            action: {
+                                              action: "prepare tool",
+                                              tool: "stamp",
+                                            }
+                                          }
+                                        });
+                                      }}
+                                    >
+                                      Prepare Visa for Entry
                                     </button>
                                   </div>
                                   <div hidden={clientGameState.cartStates.arr.filter(s => s.packed == true).length == 1}>
@@ -5500,7 +5603,7 @@ export default function MenuGame(props: MenuGameProps) {
                       const iPlayerActiveTrader = clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader;
                       const activeCart = clientGameState.cartStates.get(iPlayerActiveTrader);
 
-                      const stampInitialNetworkState: OfficerToolStampState = {
+                      const stampInitialNetworkState: OfficerToolStampState & { state: "not held" } = {
                         offset: {
                           x: 0,
                           y: -100,
@@ -5508,102 +5611,103 @@ export default function MenuGame(props: MenuGameProps) {
                         stamps: [],
                         state: "not held",
                       };
-                      const cartOfficerTools: CartOfficerTools = (
-                        (iPlayerToNum(iPlayerLocal) == iPlayerToNum(iPlayerOfficer) && clientGameState.result.resultState.resultState === "confirming")
-                          ? {
-                            present: true,
-                            state: opt({ tool: "stamp", state: stampInitialNetworkState }),
-                            controls: {
-                              localControllable: true,
-                              onInternalOfficerToolUpdate: (() => {
-                                // buffer these events to avoid spamming server
-                                let newUpdateToSend: NetworkTypes.OfficerToolState = nullopt;
-                                let sendState: (
-                                  | { queued: false, lastSendTimeMs: number }
-                                  | { queued: true, timeout: NodeJS.Timeout }
-                                ) =
-                                  { queued: false, lastSendTimeMs: 0 };
-                                let fullyUsedStampEventSent = false;
-                                const sendTheNewToolStateToSend = () => {
-                                  const sendingUpdate = newUpdateToSend;
-                                  sendState = { queued: false, lastSendTimeMs: Date.now() };
+                      const cartOfficerToolsProps: CartOfficerToolsProps = (
+                        {
+                          crowbarPresent: false,
+                          stampPresent: clientGameState.result.resultState.resultState === "confirming",
+                          controls:
+                            (
+                              iPlayerToNum(iPlayerLocal) == iPlayerToNum(iPlayerOfficer)
+                              && clientGameState.result.resultState.resultState === "confirming"
+                            )
+                              ? {
+                                localControllable: true,
+                                onInternalOfficerToolUpdate: (() => {
+                                  // buffer these events to avoid spamming server
+                                  let newUpdateToSend: Optional<NetworkTypes.OfficerToolsState> = nullopt;
+                                  let sendState: (
+                                    | { queued: false, lastSendTimeMs: number }
+                                    | { queued: true, timeout: NodeJS.Timeout }
+                                  ) =
+                                    { queued: false, lastSendTimeMs: 0 };
+                                  let fullyUsedStampEventSent = false;
+                                  const sendTheNewToolStateToSend = () => {
+                                    const sendingUpdate = newUpdateToSend;
+                                    sendState = { queued: false, lastSendTimeMs: Date.now() };
+                                    if (sendingUpdate.hasValue === false) return;
 
-                                  if (!fullyUsedStampEventSent) {
-                                    clientSendClientEventToServer({
-                                      type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
-                                      data: {
-                                        sourceClientId: props.localInfo.clientId,
-                                        action: {
-                                          action: "officer tool update",
-                                          update: {
-                                            newToolState: sendingUpdate,
-                                          }
-                                        }
-                                      }
-                                    });
-
-                                    if (sendingUpdate.hasValue == true
-                                      && sendingUpdate.value.tool == "stamp"
-                                      && sendingUpdate.value.state.state === "not held"
-                                      && sendingUpdate.value.state.stamps.length > 0
-                                    ) {
-                                      const update = sendingUpdate.value;
-                                      fullyUsedStampEventSent = true;
-                                      setTimeout(
-                                        () => clientSendClientEventToServer({
-                                          type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
-                                          data: {
-                                            sourceClientId: props.localInfo.clientId,
-                                            action: {
-                                              action: "confirm resolve",
-                                              entryVisaStamps: update.state.stamps,
+                                    if (!fullyUsedStampEventSent) {
+                                      clientSendClientEventToServer({
+                                        type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
+                                        data: {
+                                          sourceClientId: props.localInfo.clientId,
+                                          action: {
+                                            action: "officer tool update",
+                                            update: {
+                                              toolsUpdates: sendingUpdate.value,
                                             }
                                           }
-                                        }),
-                                        500
-                                      );
-                                    }
-                                  }
-                                };
+                                        }
+                                      });
 
-                                return (event) => {
-                                  newUpdateToSend = event.newToolState;
-                                  if (event.sendUpdateNow) {
-                                    if (sendState.queued === true) {
-                                      clearTimeout(sendState.timeout);
+                                      if (sendingUpdate.value.stamp.hasValue === true
+                                        && sendingUpdate.value.stamp.value.state === "not held"
+                                        && sendingUpdate.value.stamp.value.stamps.length > 0
+                                      ) {
+                                        fullyUsedStampEventSent = true;
+                                        const stamp = sendingUpdate.value.stamp.value;
+                                        setTimeout(
+                                          () => clientSendClientEventToServer({
+                                            type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
+                                            data: {
+                                              sourceClientId: props.localInfo.clientId,
+                                              action: {
+                                                action: "confirm resolve",
+                                                entryVisaStamps: stamp.stamps,
+                                              }
+                                            }
+                                          }),
+                                          500
+                                        );
+                                      }
                                     }
-                                    sendTheNewToolStateToSend();
-                                  } else if (sendState.queued == false) {
-                                    const minimumRepeatSendIntervalMs = officerToolUpdateMinIntervalMs;
-                                    const intervalSinceLastSend = Date.now() - sendState.lastSendTimeMs;
-                                    if (intervalSinceLastSend < minimumRepeatSendIntervalMs && !event.sendUpdateNow) {
-                                      sendState = {
-                                        queued: true,
-                                        timeout: setTimeout(sendTheNewToolStateToSend, (minimumRepeatSendIntervalMs - intervalSinceLastSend))
-                                      };
-                                    } else {
+                                  };
+
+                                  return (event) => {
+                                    newUpdateToSend = opt(event.toolsUpdates);
+                                    if (event.sendUpdateNow) {
+                                      if (sendState.queued === true) {
+                                        clearTimeout(sendState.timeout);
+                                      }
                                       sendTheNewToolStateToSend();
+                                    } else if (sendState.queued == false) {
+                                      const minimumRepeatSendIntervalMs = officerToolUpdateMinIntervalMs;
+                                      const intervalSinceLastSend = Date.now() - sendState.lastSendTimeMs;
+                                      if (intervalSinceLastSend < minimumRepeatSendIntervalMs && !event.sendUpdateNow) {
+                                        sendState = {
+                                          queued: true,
+                                          timeout: setTimeout(sendTheNewToolStateToSend, (minimumRepeatSendIntervalMs - intervalSinceLastSend))
+                                        };
+                                      } else {
+                                        sendTheNewToolStateToSend();
+                                      }
                                     }
-                                  }
-                                };
-                              })()
-                            }
-                          }
-                          : {
-                            present: false,
-                            controls: {
-                              localControllable: false,
-                              registerEventHandlers: (args) => {
-                                onExternalOfficerToolUpdateRegistrations.push(opt((event) => {
-                                  args.onExternalOfficerToolUpdate(event.update);
-                                }));
-                                return { handlerRegistrationId: onExternalOfficerToolUpdateRegistrations.length - 1 };
-                              },
-                              unregisterEventHandlers: (handlerRegistrationId) => {
-                                onExternalOfficerToolUpdateRegistrations[handlerRegistrationId] = nullopt;
-                              },
-                            }
-                          }
+                                  };
+                                })()
+                              }
+                              : {
+                                localControllable: false,
+                                eventHandling: {
+                                  registerEventHandlers: (args) => {
+                                    onExternalOfficerToolUpdateRegistrations.push(opt(args.onExternalOfficerToolUpdate));
+                                    return { handlerRegistrationId: onExternalOfficerToolUpdateRegistrations.length - 1 };
+                                  },
+                                  unregisterEventHandlers: (handlerRegistrationId) => {
+                                    onExternalOfficerToolUpdateRegistrations[handlerRegistrationId] = nullopt;
+                                  },
+                                }
+                              }
+                        }
                       );
 
                       const PaymentArea = (paymentAreaProps: {
@@ -5623,7 +5727,7 @@ export default function MenuGame(props: MenuGameProps) {
                           buildVisaTextEle: (args: { visaText: string, includesHeader: boolean }) => React.ReactNode,
                         }) => React.ReactNode,
                         animation: Optional<GameAnimationSequence>,
-                        officerTools: CartOfficerTools,
+                        officerTools: CartOfficerToolsProps,
                       }) => {
                         const paymentsMatch = (
                           a: { iPlayerGiver: ValidPlayerIndex, payment: { money: number } },
@@ -5796,49 +5900,51 @@ export default function MenuGame(props: MenuGameProps) {
                             >({
                               propsTools: paymentAreaProps.officerTools,
                               networkStateToLocalState({ networkState, previousState }) {
-                                return optBind(
-                                  networkState,
-                                  toolState =>
-                                    (toolState.tool === "stamp")
-                                      ? opt(
-                                        {
-                                          state: {
-                                            offset: toolState.state.offset,
-                                            stamps: toolState.state.stamps,
-                                            ...(
-                                              // networkStateToLocalState is only used for initial state (which should always be not held)
-                                              // and for external updates (in which case we're not the officer so mousePickupPosition isn't used)
-                                              (toolState.state.state === "not held")
-                                                ? { state: "not held" }
-                                                : {
-                                                  state: toolState.state.state,
-                                                  pickupInfo: {
-                                                    mousePosition: { x: 0, y: 0 },
-                                                    offset: { x: 0, y: 0 }
-                                                  }
-                                                }
-                                            )
-                                          },
-                                          animateTransition:
-                                            (previousState.hasValue === false)
-                                              ? "always"
-                                              : (previousState.value.state === "stamping" || toolState.state.state === "stamping")
-                                                ? "never"
-                                                : (
-                                                  previousState.value.offset.x !== toolState.state.offset.x
-                                                  || previousState.value.offset.y !== toolState.state.offset.y
-                                                )
-                                                  ? "always"
-                                                  : "if existing",
-                                        })
-                                      : nullopt
-                                )
+                                if (networkState.hasValue === true && networkState.value.stamp.hasValue === true) {
+                                  return opt({
+                                    state: {
+                                      offset: networkState.value.stamp.value.offset,
+                                      stamps: networkState.value.stamp.value.stamps,
+                                      ...(
+                                        // networkStateToLocalState is only used for initial state (which should always be not held)
+                                        // and for external updates (in which case we're not the officer so mousePickupPosition isn't used)
+                                        (networkState.value.stamp.value.state === "not held")
+                                          ? { state: "not held" }
+                                          : {
+                                            state: networkState.value.stamp.value.state,
+                                            pickupInfo: {
+                                              mousePosition: { x: 0, y: 0 },
+                                              offset: { x: 0, y: 0 }
+                                            }
+                                          }
+                                      )
+                                    },
+                                    animateTransition:
+                                      (previousState.hasValue === false)
+                                        ? "always"
+                                        : (previousState.value.state === "stamping" || networkState.value.stamp.value.state === "stamping")
+                                          ? "never"
+                                          : (
+                                            previousState.value.offset.x !== networkState.value.stamp.value.offset.x
+                                            || previousState.value.offset.y !== networkState.value.stamp.value.offset.y
+                                          )
+                                            ? "always"
+                                            : "if existing",
+                                  });
+                                } else if (paymentAreaProps.officerTools.stampPresent) {
+                                  return opt({
+                                    state: stampInitialNetworkState,
+                                    animateTransition: "always",
+                                  });
+                                } else {
+                                  return nullopt;
+                                }
                               },
-                              localStateToNetworkState(localState) {
-                                return opt({
-                                  tool: "stamp",
-                                  state: localState,
-                                })
+                              localStateToNetworkStateUpdate(localState) {
+                                return {
+                                  stamp: opt(localState),
+                                  crowbar: nullopt,
+                                };
                               },
 
                               stateIsOfficerControllable(localState) {
@@ -6297,7 +6403,7 @@ export default function MenuGame(props: MenuGameProps) {
                               }
                             }}
                             animation={animation}
-                            officerTools={cartOfficerTools}
+                            officerTools={cartOfficerToolsProps}
                           />
                         );
                       } else { // deal struck
@@ -6340,7 +6446,7 @@ export default function MenuGame(props: MenuGameProps) {
                                               includesHeader: false,
                                               visaText:
                                                 `having paid the required border control 
-                                                administrative fees in the amounts of:`
+                                                administrative fee in the amount of:`
                                             })}
                                             {traderPaymentData.givingListEle}
                                             {
@@ -6350,8 +6456,7 @@ export default function MenuGame(props: MenuGameProps) {
                                                     {args.buildVisaTextEle({
                                                       includesHeader: false,
                                                       visaText:
-                                                        `and having been paid good behavior
-                                                        credits in the amounts of:`
+                                                        `with change given in the amount of:`
                                                     })}
                                                     {officerPaymentData.givingListEle}
                                                   </div>
@@ -6381,7 +6486,7 @@ export default function MenuGame(props: MenuGameProps) {
                               )
                             }}
                             animation={animation}
-                            officerTools={cartOfficerTools}
+                            officerTools={cartOfficerToolsProps}
                           />
                         );
                       }
@@ -6929,14 +7034,7 @@ export default function MenuGame(props: MenuGameProps) {
                           }
                         }
                       })()}
-                      officerTools={{
-                        present: false,
-                        controls: {
-                          localControllable: false,
-                          registerEventHandlers: (_args) => ({ handlerRegistrationId: -1 }),
-                          unregisterEventHandlers: (_args) => { }
-                        }
-                      }}
+                      officerTools={{ crowbarPresent: false, stampPresent: false, controls: { localControllable: false } }}
                     />
                   </Section>
                 );

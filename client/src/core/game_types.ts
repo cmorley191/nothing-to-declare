@@ -442,7 +442,13 @@ export type ServerGameState =
     & ServerRoundGameState
     & (
       | { customsState: "ready" }
-      | { customsState: "interrogating", iPlayerActiveTrader: ValidatedPlayerIndex, proposedDeal: Optional<IgnoreDeal & { waitingOnOfficer: boolean }> }
+      | {
+        customsState: "interrogating",
+        iPlayerActiveTrader: ValidatedPlayerIndex,
+        proposedDeal: Optional<IgnoreDeal & { waitingOnOfficer: boolean }>,
+        crowbarSelected: boolean,
+        entryVisaVisible: boolean,
+      }
       | ({
         customsState: "resolving",
         iPlayerActiveTrader: ValidatedPlayerIndex,
@@ -455,7 +461,7 @@ export type ServerGameState =
               | { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] }
             )
           }
-          | { result: "ignored", resultState: { resultState: "continuing" } }
+          | { result: "ignored", resultState: { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] } }
           | {
             result: "ignored for deal",
             deal: IgnoreDeal,
@@ -479,7 +485,13 @@ export type SerializableServerGameState =
     & SerializableServerRoundGameState
     & (
       | { customsState: "ready" }
-      | { customsState: "interrogating", iPlayerActiveTrader: number, proposedDeal: Optional<IgnoreDeal & { waitingOnOfficer: boolean }> }
+      | {
+        customsState: "interrogating",
+        iPlayerActiveTrader: number,
+        proposedDeal: Optional<IgnoreDeal & { waitingOnOfficer: boolean }>,
+        crowbarSelected: boolean,
+        entryVisaVisible: boolean,
+      }
       | ({
         customsState: "resolving",
         iPlayerActiveTrader: number,
@@ -492,7 +504,7 @@ export type SerializableServerGameState =
               | { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] }
             )
           }
-          | { result: "ignored", resultState: { resultState: "continuing" } }
+          | { result: "ignored", resultState: { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] } }
           | {
             result: "ignored for deal",
             deal: IgnoreDeal,
@@ -573,7 +585,13 @@ export type ClientGameState = (
     & (
       | ({ customsState: "ready", readyState: ({ state: "transitioning", iPlayerExitingCart: ValidatedPlayerIndex } | { state: "ready" }) } & ClientRoundGameState)
       | (
-        & { customsState: "interrogating", interrogatingState: ("cart entering" | "ready"), proposedDeal: Optional<IgnoreDeal & { waitingOnOfficer: boolean }> }
+        & {
+          customsState: "interrogating",
+          interrogatingState: ("cart entering" | "ready"),
+          proposedDeal: Optional<IgnoreDeal & { waitingOnOfficer: boolean }>,
+          crowbarSelected: boolean,
+          entryVisaVisible: boolean,
+        }
         & (
           | (TraderClientRoundGameState & { localActiveTrader: false, iPlayerActiveTrader: ValidatedPlayerIndex })
           | (
@@ -601,7 +619,7 @@ export type ClientGameState = (
                 | { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] }
               )
             }
-            | { result: "ignored", resultState: { resultState: "continuing" } }
+            | { result: "ignored", resultState: { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] } }
             | {
               result: "ignored for deal",
               deal: IgnoreDeal,

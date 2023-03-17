@@ -7,10 +7,21 @@
   - simple: swap and pack in the same stage, simultaneously with other traders. no taking contracts from recycle pool (recycle pool does not exist)
   - strategic: swap sequentially, taking and recycling contracts via recycle pool. then pack simultaneously (start packing as soon as local swap complete)
 - chat window with game log
+  - emote wheel
 - optionally add text message on deal
 - make deals with supplies products
 - pay fines with supplies products if out of money
-- approval stamp officer tool
+- (WIP) approval stamp officer tool
+  - Todo:
+    - (WIP) tool available in interrogation customsState
+    - special entry visa post-its
+    - incident report incident field instead of section title
+    - incident report legal contents wait until after stamp
+    - stamp puts target around mouse, hovers (sorta-)far above
+      - target could go away when not inStampArea
+    - minimum delay from stamping->held?
+      - could have a special animation? if it was seal wax
+    - 
 - hammer officer tool
 - make deals at any time
 - traders and officer select a particular recycle pool to discard recycled and illegal-caught contracts
