@@ -1973,29 +1973,33 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
     previousState: Optional<TLocalState>,
   }) => Optional<{ state: TLocalState, animateTransition: "always" | "if existing" | "never" }>,
   localStateToNetworkStateUpdate: (localState: TLocalState) => NetworkTypes.OfficerToolsState,
-  stateIsOfficerControllable: (localState: TLocalState) => boolean,
-  statesEqual: (a: TLocalState, b: TLocalState) => boolean,
+  isStateOfficerControllable: (localState: TLocalState) => boolean,
+  areStatesEqualForRenderAndNetwork: (a: TLocalState, b: TLocalState) => boolean,
   getMouseDownState: (args: {
+    eventTimeMs: number,
     previousState: TLocalState,
     mousePosition: { x: number, y: number },
   }) => { state: TLocalState, animateTransition: "always" | "if existing" | "never", sendUpdateNow: boolean },
   getMouseUpState: (args: {
+    eventTimeMs: number,
     previousState: TLocalState,
     mousePosition: { x: number, y: number },
   }) => { state: TLocalState, animateTransition: "always" | "if existing" | "never", sendUpdateNow: boolean },
   getMouseMoveState: (args: {
+    eventTimeMs: number,
     previousState: TLocalState,
     mousePosition: { x: number, y: number },
     mouseDownPosition: Optional<{ x: number, y: number }>,
   }) => { state: TLocalState, animateTransition: "always" | "if existing" | "never", sendUpdateNow: boolean },
   animationFunction: "linear",
-  getInterruptedAnimationState: (args: { animationProgress: number, startState: TLocalState, endState: TLocalState }) => TLocalState,
+  getInterruptedAnimationState: (args: { eventTime: number, animationProgress: number, startState: TLocalState, endState: TLocalState }) => TLocalState,
 }) {
   const toolUpdateAnimationDurationMs = officerToolUpdateMinIntervalMs + 50;
   const getInterruptedAnimationState = (funcArgs: { animationStartTimeMs: number, interruptMs: number, startState: TLocalState, endState: TLocalState }) => {
     // currently only linear function permitted
     return args.getInterruptedAnimationState({
       ...funcArgs,
+      eventTime: funcArgs.interruptMs,
       animationProgress:
         Math.min((funcArgs.interruptMs - funcArgs.animationStartTimeMs), toolUpdateAnimationDurationMs)
         / toolUpdateAnimationDurationMs,
@@ -2024,29 +2028,39 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
       )
   );
 
-  const onMouseDownUpHandler = (funcArgs: { event: MouseEvent, downEvent: boolean }) => {
-    if (args.propsTools.crowbarPresent === false && args.propsTools.stampPresent === false) return;
+  const onOfficerControlEvent = (funcArgs: {
+    eventTimeMs: number,
+    newMouse?:
+    | { down: false }
+    | { down: true, startPosition: { x: number, y: number } },
+    getEventState: (currentLocalState: TLocalState) => {
+      state: TLocalState;
+      animateTransition: "always" | "if existing" | "never";
+      sendUpdateNow: boolean;
+    },
+  }) => {
+    if (localData.hasValue === false) return;
     const controls = args.propsTools.controls;
+
+    /*const onMouseDownUpHandler = (funcArgs: { event: MouseEvent, downEvent: boolean }) => {
+      if (args.propsTools.crowbarPresent === false && args.propsTools.stampPresent === false) return;
+      const controls = args.propsTools.controls;*/
     if (
       controls.localControllable == false
-      || (localData.hasValue == true && !(args.stateIsOfficerControllable(localData.value.localState)))
+      || (localData.hasValue == true && !(args.isStateOfficerControllable(localData.value.localState)))
     ) {
       return;
     }
 
-    const eventTime = Date.now();
-    setLocalData(() => {
-      if (localData.hasValue == false) return nullopt;
-      if (localData.value.mouse.down == funcArgs.downEvent) { // repeat event, shouldn't happen
-        return localData;
-      }
+    const newMouse = funcArgs.newMouse ?? localData.value.mouse;
 
+    setLocalData(() => {
       const animationData = optMap(localData.value.animation,
         animation => ({
           animation: animation,
           interruptState: getInterruptedAnimationState({
             animationStartTimeMs: animation.animationStartTimeMs,
-            interruptMs: eventTime,
+            interruptMs: funcArgs.eventTimeMs,
             startState: localData.value.localState,
             endState: animation.destLocalState,
           })
@@ -2054,60 +2068,82 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
       );
 
       const currentState = animationData.hasValue === true ? animationData.value.interruptState : localData.value.localState;
+      const newState = funcArgs.getEventState(currentState);
 
-      const newLocalState =
-        (
-          (funcArgs.downEvent == true)
-            ? args.getMouseDownState
-            : args.getMouseUpState
-        )({
-          previousState: currentState,
-          mousePosition: { x: funcArgs.event.clientX, y: funcArgs.event.clientY },
-        });
-
-      if (animationData.hasValue === true && args.statesEqual(newLocalState.state, animationData.value.animation.destLocalState)) {
+      if (animationData.hasValue === true && args.areStatesEqualForRenderAndNetwork(newState.state, animationData.value.animation.destLocalState)) {
         return opt({
-          ...localData.value,
-          mouse:
-            (funcArgs.downEvent == true)
-              ? { down: true, startPosition: { x: funcArgs.event.clientX, y: funcArgs.event.clientY } }
-              : { down: false },
+          mouse: newMouse,
+          localState: localData.value.localState,
           animation: opt({
             ...animationData.value.animation,
-            destLocalState: newLocalState.state,
+            destLocalState: newState.state,
           })
         });
       }
 
-      const currentEqualsNew = args.statesEqual(currentState, newLocalState.state);
+      const currentEqualsNew = args.areStatesEqualForRenderAndNetwork(currentState, newState.state);
 
       if (!currentEqualsNew) {
         controls.onInternalOfficerToolUpdate({
-          toolsUpdates: args.localStateToNetworkStateUpdate(newLocalState.state),
-          sendUpdateNow: newLocalState.sendUpdateNow,
+          toolsUpdates: args.localStateToNetworkStateUpdate(newState.state),
+          sendUpdateNow: newState.sendUpdateNow,
         });
       }
 
       return opt({
-        mouse:
-          (funcArgs.downEvent == true)
-            ? { down: true, startPosition: { x: funcArgs.event.clientX, y: funcArgs.event.clientY } }
-            : { down: false },
+        mouse: newMouse,
         ...(
-          (!currentEqualsNew && (newLocalState.animateTransition === "always" || (newLocalState.animateTransition === "if existing" && animationData.hasValue)))
+          (!currentEqualsNew && (newState.animateTransition === "always" || (newState.animateTransition === "if existing" && animationData.hasValue)))
             ? {
               localState: currentState,
               animation: opt({
-                animationStartTimeMs: eventTime,
-                destLocalState: newLocalState.state
+                animationStartTimeMs: funcArgs.eventTimeMs,
+                destLocalState: newState.state
               })
             }
             : {
-              localState: newLocalState.state,
+              localState: newState.state,
               animation: nullopt,
             }
         )
       });
+    });
+  }
+
+  const onMouseDownUp = (funcArgs: { event: MouseEvent, downEvent: boolean }) => {
+    const eventTimeMs = Date.now();
+    if (args.propsTools.crowbarPresent === false && args.propsTools.stampPresent === false) return;
+
+    if (localData.hasValue === false) return; // ignore when tool not present
+
+    if (
+      args.propsTools.controls.localControllable == false
+      || !(args.isStateOfficerControllable(localData.value.localState))
+    ) {
+      return; // ignore mouse events when tool not controllable
+    }
+
+    if (localData.value.mouse.down === funcArgs.downEvent) {
+      return;  // ignore repeat downup events; they shouldn't happen
+    }
+
+    onOfficerControlEvent({
+      eventTimeMs,
+      newMouse:
+        (funcArgs.downEvent == true)
+          ? { down: true, startPosition: { x: funcArgs.event.clientX, y: funcArgs.event.clientY } }
+          : { down: false },
+      getEventState(currentLocalState) {
+        return (
+          (funcArgs.downEvent == true)
+            ? args.getMouseDownState
+            : args.getMouseUpState
+        )({
+          eventTimeMs,
+          previousState: currentLocalState,
+          mousePosition: { x: funcArgs.event.clientX, y: funcArgs.event.clientY },
+        });
+      },
     });
   }
 
@@ -2119,7 +2155,7 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
       if (eventHandling !== undefined) {
         const { handlerRegistrationId } = eventHandling.registerEventHandlers({
           onExternalOfficerToolUpdate: (event) => {
-            if (localData.hasValue == true && !(args.stateIsOfficerControllable(localData.value.localState))) {
+            if (localData.hasValue == true && !(args.isStateOfficerControllable(localData.value.localState))) {
               return;
             }
 
@@ -2135,7 +2171,7 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
                       animation: nullopt,
                     };
                   } else {
-                    if (localData.value.animation.hasValue === true && args.statesEqual(newLocalState.state, localData.value.animation.value.destLocalState)) {
+                    if (localData.value.animation.hasValue === true && args.areStatesEqualForRenderAndNetwork(newLocalState.state, localData.value.animation.value.destLocalState)) {
                       return {
                         ...localData.value,
                         animation: opt({
@@ -2156,7 +2192,7 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
                         })
                     );
 
-                    if (!args.statesEqual(currentLocalState, newLocalState.state) && (newLocalState.animateTransition === "always" || (newLocalState.animateTransition === "if existing" && localData.value.animation.hasValue))) {
+                    if (!args.areStatesEqualForRenderAndNetwork(currentLocalState, newLocalState.state) && (newLocalState.animateTransition === "always" || (newLocalState.animateTransition === "if existing" && localData.value.animation.hasValue))) {
                       return {
                         mouse: { down: false }, // won't be used
                         localState: currentLocalState,
@@ -2184,81 +2220,32 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
       }
 
     } else { // localControllable == true
-      const onWindowMouseUpListener = (event: MouseEvent) => { onMouseDownUpHandler({ event, downEvent: false }); };
-      const onWindowMouseMoveListener = (event: MouseEvent) => {
-        if (localData.hasValue == true && !(args.stateIsOfficerControllable(localData.value.localState))) return;
-        const eventTime = Date.now();
+      const onWindowMouseUp = (event: MouseEvent) => { onMouseDownUp({ event, downEvent: false }); };
+      const onWindowMouseMove = (event: MouseEvent) => {
+        const eventTimeMs = Date.now();
+        if (args.propsTools.crowbarPresent === false && args.propsTools.stampPresent === false) return;
+        if (localData.hasValue === false) return;
+        if (!args.isStateOfficerControllable(localData.value.localState)) return;
 
-        setLocalData(() => {
-          if (localData.hasValue == false) return localData;
-
-          const animationData = optMap(localData.value.animation,
-            animation => ({
-              animation: animation,
-              interruptState: getInterruptedAnimationState({
-                animationStartTimeMs: animation.animationStartTimeMs,
-                interruptMs: eventTime,
-                startState: localData.value.localState,
-                endState: animation.destLocalState,
-              })
-            })
-          );
-
-          const currentState = animationData.hasValue === true ? animationData.value.interruptState : localData.value.localState;
-
-          const newLocalState =
-            args.getMouseMoveState({
-              previousState: currentState,
+        onOfficerControlEvent({
+          eventTimeMs,
+          getEventState(currentLocalState) {
+            return args.getMouseMoveState({
+              eventTimeMs,
+              previousState: currentLocalState,
               mousePosition: { x: event.clientX, y: event.clientY },
               mouseDownPosition: (localData.value.mouse.down === true) ? opt(localData.value.mouse.startPosition) : nullopt,
             });
-
-          if (animationData.hasValue === true && args.statesEqual(newLocalState.state, animationData.value.animation.destLocalState)) {
-            return opt({
-              ...localData.value,
-              animation: opt({
-                ...animationData.value.animation,
-                destLocalState: newLocalState.state,
-              })
-            });
-          }
-
-          const currentEqualsNew = args.statesEqual(currentState, newLocalState.state);
-
-          if (!currentEqualsNew) {
-            controls.onInternalOfficerToolUpdate({
-              toolsUpdates: args.localStateToNetworkStateUpdate(newLocalState.state),
-              sendUpdateNow: newLocalState.sendUpdateNow,
-            });
-          }
-
-          if (!currentEqualsNew && (newLocalState.animateTransition === "always" || (newLocalState.animateTransition === "if existing" && animationData.hasValue))) {
-            console.log(localData);
-
-            return opt({
-              ...localData.value,
-              localState: currentState,
-              animation: opt({
-                animationStartTimeMs: eventTime,
-                destLocalState: newLocalState.state,
-              })
-            });
-          } else {
-            return opt({
-              ...localData.value,
-              localState: newLocalState.state,
-              animation: nullopt,
-            });
-          }
-        })
+          },
+        });
       };
 
-      window.addEventListener("mouseup", onWindowMouseUpListener);
-      window.addEventListener("mousemove", onWindowMouseMoveListener);
+      window.addEventListener("mouseup", onWindowMouseUp);
+      window.addEventListener("mousemove", onWindowMouseMove);
 
       return () => {
-        window.removeEventListener("mouseup", onWindowMouseUpListener);
-        window.removeEventListener("mousemove", onWindowMouseMoveListener);
+        window.removeEventListener("mouseup", onWindowMouseUp);
+        window.removeEventListener("mousemove", onWindowMouseMove);
       };
     }
   }, [localData]);
@@ -2266,7 +2253,15 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
   return {
     toolUpdateAnimationDurationMs,
     localData,
-    onToolMouseDownHandler: (event: MouseEvent) => onMouseDownUpHandler({ event, downEvent: true }),
+    onOfficerControlEvent: ((args: {
+      eventTimeMs: number,
+      getEventState: (currentLocalState: TLocalState) => {
+        state: TLocalState;
+        animateTransition: "always" | "if existing" | "never";
+        sendUpdateNow: boolean;
+      },
+    }) => onOfficerControlEvent(args)),
+    onToolMouseDown: (event: MouseEvent) => onMouseDownUp({ event, downEvent: true }),
     onAnimationComplete: () => {
       if (localData.hasValue === true && localData.value.animation.hasValue === true) {
         setLocalData(opt({
@@ -2302,7 +2297,7 @@ function AnimatedCart(props: {
 
   const {
     localData: crowbarDragData,
-    onToolMouseDownHandler: onCrowbarMouseDownHandler,
+    onToolMouseDown: onCrowbarMouseDownHandler,
     toolUpdateAnimationDurationMs: crowbarUpdateAnimationDurationMs,
     onAnimationComplete: onCrowbarAnimationComplete,
   } = (
@@ -2347,7 +2342,7 @@ function AnimatedCart(props: {
           };
         },
 
-        stateIsOfficerControllable(localState) {
+        isStateOfficerControllable(localState) {
           return (
             props.officerTools.crowbarFullyUsed === false
             && localState.crowbar.useProgress < 1
@@ -2361,7 +2356,7 @@ function AnimatedCart(props: {
           );
         },
 
-        statesEqual(localStateA, localStateB) {
+        areStatesEqualForRenderAndNetwork(localStateA, localStateB) {
           return localStateA.crowbar.useProgress == localStateB.crowbar.useProgress;
         },
 
@@ -3187,10 +3182,12 @@ function EntryVisa(props: {
     offset.x >= -30 && offset.x <= 30
     && offset.y >= -30 && offset.y <= stampZoneMaximumY
   );
+  const stampMinDurationMs = 500;
 
   const {
     localData: stampDragData,
-    onToolMouseDownHandler: onStampMouseDownHandler,
+    onOfficerControlEvent: onStampOfficerControlEvent,
+    onToolMouseDown: onStampMouseDownHandler,
     toolUpdateAnimationDurationMs: stampUpdateAnimationDurationMs,
     onAnimationComplete: onStampAnimationComplete,
   } = (
@@ -3198,13 +3195,18 @@ function EntryVisa(props: {
         & OfficerToolStampState
         & (
           | { state: "not held" }
-          | {
-            state: "held" | "stamping",
-            pickupInfo: {
-              mousePosition: { x: number, y: number },
-              offset: { x: number, y: number },
-            },
-          }
+          | (
+            & (
+              | { state: "held" }
+              | { state: "stamping", stampingStartTimeMs: number, liftRequestedOffset: Optional<{ x: number, y: number }> }
+            )
+            & {
+              pickupInfo: {
+                mousePosition: { x: number, y: number },
+                offset: { x: number, y: number },
+              },
+            }
+          )
         )
       >({
         propsTools: props.officerTools,
@@ -3220,7 +3222,11 @@ function EntryVisa(props: {
                   (networkState.value.stamp.value.state === "not held")
                     ? { state: "not held" }
                     : {
-                      state: networkState.value.stamp.value.state,
+                      ...(
+                        (networkState.value.stamp.value.state === "stamping")
+                          ? { state: "stamping", stampingStartTimeMs: 0, liftRequestedOffset: nullopt }
+                          : { state: networkState.value.stamp.value.state }
+                      ),
                       pickupInfo: {
                         mousePosition: { x: 0, y: 0 },
                         offset: { x: 0, y: 0 }
@@ -3256,11 +3262,11 @@ function EntryVisa(props: {
           };
         },
 
-        stateIsOfficerControllable(localState) {
+        isStateOfficerControllable(localState) {
           return localState.stamps.length == 0 || (localState.state !== "not held");
         },
 
-        statesEqual(a, b) {
+        areStatesEqualForRenderAndNetwork(a, b) {
           const stampsZipped = a.stamps.zip(b.stamps);
           return (
             a.offset.x == b.offset.x && a.offset.y == b.offset.y
@@ -3284,9 +3290,12 @@ function EntryVisa(props: {
               sendUpdateNow: true,
             };
           } else if (args.previousState.state === "stamping") {
-            // duplicate event? weird
+            // ignore duplicate stamp
             return {
-              state: args.previousState,
+              state: {
+                ...args.previousState,
+                stopRequested: false,
+              },
               animateTransition: "never",
               sendUpdateNow: false,
             };
@@ -3302,6 +3311,8 @@ function EntryVisa(props: {
                   // sanity check: only allow 20 stamps
                   stamps: args.previousState.stamps.skip(Math.max(0, args.previousState.stamps.length - 19)).concat([newOffset]),
                   state: "stamping",
+                  stampingStartTimeMs: args.eventTimeMs,
+                  liftRequestedOffset: nullopt,
                   pickupInfo: args.previousState.pickupInfo,
                 },
                 animateTransition: "never",
@@ -3321,7 +3332,7 @@ function EntryVisa(props: {
           }
         },
 
-        getMouseUpState({ previousState }) {
+        getMouseUpState({ eventTimeMs, previousState, mousePosition }) {
           if (previousState.state === "held") {
             // mouse up happened after stamp has just been picked up
             return { state: previousState, animateTransition: "never", sendUpdateNow: false };
@@ -3338,11 +3349,22 @@ function EntryVisa(props: {
             };
           } else {
             // mouse up to lift from stamp
+            const newOffset = {
+              x: previousState.pickupInfo.offset.x + (mousePosition.x - previousState.pickupInfo.mousePosition.x),
+              y: previousState.pickupInfo.offset.y + (mousePosition.y - previousState.pickupInfo.mousePosition.y),
+            };
             return {
-              state: {
-                ...previousState,
-                state: "held",
-              },
+              state:
+                (eventTimeMs < (previousState.stampingStartTimeMs + stampMinDurationMs))
+                  ? {
+                    ...previousState,
+                    liftRequestedOffset: opt(newOffset),
+                  }
+                  : {
+                    ...previousState,
+                    state: "held",
+                    offset: newOffset,
+                  },
               animateTransition: "never",
               sendUpdateNow: true,
             }
@@ -3361,26 +3383,31 @@ function EntryVisa(props: {
               animateTransition: "if existing",
               sendUpdateNow: true,
             };
-          } else if (args.previousState.state === "stamping") {
-            // mouse move happened in the middle of stamping
-            return {
-              state: args.previousState,
-              animateTransition: "if existing",
-              sendUpdateNow: false,
-            };
           } else {
-            // mouse move happened while holding
             const newOffset = {
               x: args.previousState.pickupInfo.offset.x + (args.mousePosition.x - args.previousState.pickupInfo.mousePosition.x),
               y: args.previousState.pickupInfo.offset.y + (args.mousePosition.y - args.previousState.pickupInfo.mousePosition.y),
             };
-            return {
-              state: {
-                ...args.previousState,
-                offset: newOffset,
-              },
-              animateTransition: "never",
-              sendUpdateNow: false,
+            if (args.previousState.state === "stamping") {
+              // mouse move happened in the middle of stamping
+              return {
+                state: {
+                  ...args.previousState,
+                  liftRequestedOffset: optMap(args.previousState.liftRequestedOffset, () => newOffset)
+                },
+                animateTransition: "if existing",
+                sendUpdateNow: false,
+              };
+            } else {
+              // mouse move happened while holding
+              return {
+                state: {
+                  ...args.previousState,
+                  offset: newOffset,
+                },
+                animateTransition: "never",
+                sendUpdateNow: false,
+              }
             }
           }
         },
@@ -3398,6 +3425,47 @@ function EntryVisa(props: {
         },
       })
     );
+
+  React.useEffect(() => {
+    const nowMs = Date.now();
+    if (stampDragData.hasValue === true
+      && stampDragData.value.localState.state === "stamping"
+      && nowMs < (stampDragData.value.localState.stampingStartTimeMs + stampMinDurationMs)
+      && stampDragData.value.localState.liftRequestedOffset.hasValue === true
+    ) {
+      const timeout = setTimeout(() => {
+        onStampOfficerControlEvent({
+          eventTimeMs: nowMs,
+          getEventState(currentLocalState) {
+            // the above if conditions should still take effect, but we sorta have to pretend like currentLocalState could be different
+            if (currentLocalState.state === "stamping") {
+              return {
+                state: {
+                  ...currentLocalState,
+                  state: "held",
+                  offset:
+                    (currentLocalState.liftRequestedOffset.hasValue === true)
+                      ? currentLocalState.liftRequestedOffset.value
+                      : currentLocalState.offset,
+                },
+                animateTransition: "never",
+                sendUpdateNow: true,
+              };
+            } else {
+              // so this should never happen, but just in case
+              return {
+                state: currentLocalState,
+                animateTransition: "if existing",
+                sendUpdateNow: false,
+              }
+            }
+          },
+        });
+      }, (stampDragData.value.localState.stampingStartTimeMs + stampMinDurationMs - nowMs));
+      return (() => { clearTimeout(timeout); });
+    }
+    return undefined;
+  }, [stampDragData]);
 
   console.log(stampDragData);
   console.log(currentRenderTimeMs);

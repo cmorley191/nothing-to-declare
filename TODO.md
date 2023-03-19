@@ -20,8 +20,8 @@
       - special entry visa post-its?
     - incident report legal contents wait until after stamp
     - (DONE) stamp puts target around mouse, hovers (sorta-)far above
-    - minimum delay from stamping->held?
-      - could have a special animation? if it was seal wax
+    - (DONE) minimum delay from stamping->held?
+      - animation?
 - hammer officer tool
 - make deals at any time
 - traders and officer select a particular recycle pool to discard recycled and illegal-caught contracts
