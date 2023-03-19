@@ -2286,7 +2286,7 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
  */
 function AnimatedCart(props: {
   contents: CartContents,
-  officerTools: CartOfficerToolsProps,
+  officerTools: CartOfficerToolsProps & { crowbarFullyUsed: boolean },
   animation: Optional<{
     animation: "blast lid" | "open lid" | "close lid",
     onComplete: Optional<() => void>,
@@ -2309,7 +2309,15 @@ function AnimatedCart(props: {
       useNetworkedOfficerToolState<{ crowbar: NetworkTypes.OfficerToolCrowbarState, stamp: Optional<OfficerToolStampState> }>({
         propsTools: props.officerTools,
         networkStateToLocalState({ networkState }) {
-          if (networkState.hasValue === true && networkState.value.crowbar.hasValue === true) {
+          if (props.officerTools.crowbarFullyUsed) {
+            return opt({
+              state: {
+                crowbar: { useProgress: 1 },
+                stamp: nullopt,
+              },
+              animateTransition: "if existing",
+            });
+          } else if (networkState.hasValue === true && networkState.value.crowbar.hasValue === true) {
             return opt({
               state: {
                 crowbar: networkState.value.crowbar.value,
@@ -2341,7 +2349,8 @@ function AnimatedCart(props: {
 
         stateIsOfficerControllable(localState) {
           return (
-            localState.crowbar.useProgress < 1
+            props.officerTools.crowbarFullyUsed === false
+            && localState.crowbar.useProgress < 1
             && (
               localState.stamp.hasValue === false
               || (
@@ -2708,7 +2717,7 @@ function FloatingAnimatedCart(props: {
         style={{ opacity: props.active && props.animation.hasValue == false ? 1 : 0, display: "inline-block" }}
         contents={props.contents}
         animation={nullopt}
-        officerTools={props.officerTools}
+        officerTools={{ ...props.officerTools, crowbarFullyUsed: false }}
       />
       {
         (props.active && props.animation.hasValue == true)
@@ -2772,9 +2781,10 @@ function FloatingAnimatedCart(props: {
                     ? {
                       ...props.officerTools,
                       crowbarPresent: true,
+                      crowbarFullyUsed: true,
                       controls: { localControllable: false }
                     }
-                    : props.officerTools
+                    : { ...props.officerTools, crowbarFullyUsed: false }
                 }
               />
               <span id={`${getStaticCartEleId({ location: props.location, iPlayerOwner: props.iPlayerOwner })}_floating_section_product_cart_interior_reference`}
@@ -2994,6 +3004,632 @@ function Earnings(props: {
     </div>
   );
 
+}
+
+/**
+ * (Element) Div of a stampable scroll with text - either an entry visa, incident report, or deal payment
+ */
+function EntryVisa(props: {
+  title: string,
+  buildVisaBodyEle: (args: {
+    paymentsData: {
+      givingListEle: React.ReactNode,
+      payment: {
+        iPlayerGiver: ValidPlayerIndex,
+        payment: {
+          money: number,
+        },
+      },
+      preAnimationStepPaymentState: "revealed" | "collected" | "distributed" | "not yet revealed",
+      postAnimationStepPaymentState: "revealed" | "collected" | "distributed" | "not yet revealed",
+    }[],
+    buildVisaTextEle: (args: { visaText: string, includesHeader: boolean }) => React.ReactNode,
+  }) => React.ReactNode,
+  animation: Optional<GameAnimationSequence>,
+  officerTools: CartOfficerToolsProps,
+  stampIcon: string,
+  stamps: NetworkTypes.EntryVisaStamp[],
+}) {
+  const paymentsMatch = (
+    a: { iPlayerGiver: ValidPlayerIndex, payment: { money: number } },
+    b: { iPlayerGiver: ValidPlayerIndex, payment: { money: number } },
+  ) => iPlayerToNum(a.iPlayerGiver) === iPlayerToNum(b.iPlayerGiver);
+
+  const { iGameAnimationStep, gameAnimationStep, preAnimationStepState, postAnimationStepState, postAnimationSequenceState } = (
+    useGameAnimationStates<{
+      revealedPaymentsStates: {
+        payment: {
+          iPlayerGiver: ValidPlayerIndex,
+          payment: { money: number },
+        }
+        state: "revealed" | "collected" | "distributed",
+      }[],
+      onStateReached: Optional<() => void>,
+    }>({
+      animation: props.animation,
+      propsState: {
+        revealedPaymentsStates: [],
+        onStateReached: nullopt,
+      },
+
+      getPostStepState({
+        step,
+        callAllOnCompletes,
+        previousState,
+      }) {
+        if (step.type === "payment") {
+          const newRevealedPaymentsStates = previousState.revealedPaymentsStates.shallowCopy();
+          const stepPaymentState = (() => {
+            const stepPaymentInitialState = {
+              payment: {
+                iPlayerGiver: step.iPlayerGiver,
+                payment: step.payment,
+              },
+              state: "revealed" as "revealed" | "collected" | "distributed",
+            };
+            for (let i = 0; i < newRevealedPaymentsStates.length; i++) {
+              const paymentState = newRevealedPaymentsStates[i];
+              if (paymentState === undefined) continue; // TODO fix this should never happen
+              if (paymentsMatch(paymentState.payment, stepPaymentInitialState.payment)) {
+                newRevealedPaymentsStates[i] = stepPaymentInitialState;
+                return stepPaymentInitialState;
+              }
+            }
+            // else
+            newRevealedPaymentsStates.push(stepPaymentInitialState);
+            return stepPaymentInitialState;
+          })();
+
+          if (step.action === "reveal if not yet revealed") {
+            // there are no paymentStates where this has not yet happened. Leave as-is.
+          } else if (step.action === "give" && stepPaymentState.state === "revealed") {
+            stepPaymentState.state = "collected";
+          } else if (step.action === "receive") {
+            // there are no paymentStates where this has happened (except distributed so okay to overwrite)
+            stepPaymentState.state = "distributed";
+          }
+
+          return {
+            ...previousState,
+            revealedPaymentsStates: newRevealedPaymentsStates,
+            onStateReached: opt(callAllOnCompletes),
+          };
+        } else {
+          return {
+            ...previousState,
+            onStateReached: nullopt,
+          };
+        }
+      },
+
+      getPostSequenceState({ previousState }) {
+        return {
+          ...previousState,
+          onStateReached: nullopt,
+        }
+      },
+    })
+  );
+
+  React.useEffect(() => {
+    if (
+      gameAnimationStep.hasValue === true
+      && gameAnimationStep.value.step.type === "payment"
+      && gameAnimationStep.value.step.action === "reveal if not yet revealed"
+    ) {
+      gameAnimationStep.value.onCompleteRegistrations.forEach(c => c());
+    }
+  }, [iGameAnimationStep]);
+
+  const allPaymentsData = (
+    postAnimationSequenceState.revealedPaymentsStates
+      .map(finalPaymentState => ({
+        payment: finalPaymentState.payment,
+        preAnimationStepPaymentState:
+          preAnimationStepState.revealedPaymentsStates
+            .filter(paymentState => paymentsMatch(paymentState.payment, finalPaymentState.payment))
+          [0]
+            ?.state
+          ?? ("not yet revealed" as "not yet revealed"),
+        postAnimationStepPaymentState:
+          postAnimationStepState.revealedPaymentsStates
+            .filter(paymentState => paymentsMatch(paymentState.payment, finalPaymentState.payment))
+          [0]
+            ?.state
+          ?? ("not yet revealed" as "not yet revealed"),
+      }))
+      .map(paymentData => ({
+        ...paymentData,
+        givingListEle: (
+          <div>
+            {
+              [
+                {
+                  icon: moneyIcon,
+                  amount: paymentData.payment.payment.money
+                }
+              ]
+                .filter(s => s.amount > 0)
+                .map(s => (
+                  <span key={`menu_game_payment_player_${iPlayerToNum(paymentData.payment.iPlayerGiver)}_icon_${s.icon}`}>
+                    {s.amount}{" "}
+                    <span
+                      style={{
+                        opacity:
+                          (paymentData.preAnimationStepPaymentState === "collected" && paymentData.postAnimationStepPaymentState === "collected")
+                            ? 1
+                            : 0.3
+                      }}
+                      id={`menu_game_payment_player_${iPlayerToNum(paymentData.payment.iPlayerGiver)}_item_money`}>{s.icon}
+                    </span>
+                  </span>
+                ))
+            }
+          </div>
+        )
+      }))
+  );
+
+  const currentRenderTimeMs = Date.now();
+
+  const stampInitialNetworkState: OfficerToolStampState & { state: "not held" } = {
+    offset: {
+      x: 0,
+      y: -100,
+    },
+    stamps: [],
+    state: "not held",
+  };
+  const stampUpdateAnimationFunction = "linear" as "linear";
+
+  const stampZoneMaximumY = 15;
+  const inStampZone = (offset: { x: number, y: number }) => (
+    offset.x >= -30 && offset.x <= 30
+    && offset.y >= -30 && offset.y <= stampZoneMaximumY
+  );
+
+  const {
+    localData: stampDragData,
+    onToolMouseDownHandler: onStampMouseDownHandler,
+    toolUpdateAnimationDurationMs: stampUpdateAnimationDurationMs,
+    onAnimationComplete: onStampAnimationComplete,
+  } = (
+      useNetworkedOfficerToolState<
+        & OfficerToolStampState
+        & (
+          | { state: "not held" }
+          | {
+            state: "held" | "stamping",
+            pickupInfo: {
+              mousePosition: { x: number, y: number },
+              offset: { x: number, y: number },
+            },
+          }
+        )
+      >({
+        propsTools: props.officerTools,
+        networkStateToLocalState({ networkState, previousState }) {
+          if (networkState.hasValue === true && networkState.value.stamp.hasValue === true) {
+            return opt({
+              state: {
+                offset: networkState.value.stamp.value.offset,
+                stamps: networkState.value.stamp.value.stamps,
+                ...(
+                  // networkStateToLocalState is only used for initial state (which should always be not held)
+                  // and for external updates (in which case we're not the officer so mousePickupPosition isn't used)
+                  (networkState.value.stamp.value.state === "not held")
+                    ? { state: "not held" }
+                    : {
+                      state: networkState.value.stamp.value.state,
+                      pickupInfo: {
+                        mousePosition: { x: 0, y: 0 },
+                        offset: { x: 0, y: 0 }
+                      }
+                    }
+                )
+              },
+              animateTransition:
+                (previousState.hasValue === false)
+                  ? "always"
+                  : (previousState.value.state === "stamping" || networkState.value.stamp.value.state === "stamping")
+                    ? "never"
+                    : (
+                      previousState.value.offset.x !== networkState.value.stamp.value.offset.x
+                      || previousState.value.offset.y !== networkState.value.stamp.value.offset.y
+                    )
+                      ? "always"
+                      : "if existing",
+            });
+          } else if (props.officerTools.stampPresent) {
+            return opt({
+              state: stampInitialNetworkState,
+              animateTransition: "always",
+            });
+          } else {
+            return nullopt;
+          }
+        },
+        localStateToNetworkStateUpdate(localState) {
+          return {
+            stamp: opt(localState),
+            crowbar: nullopt,
+          };
+        },
+
+        stateIsOfficerControllable(localState) {
+          return localState.stamps.length == 0 || (localState.state !== "not held");
+        },
+
+        statesEqual(a, b) {
+          const stampsZipped = a.stamps.zip(b.stamps);
+          return (
+            a.offset.x == b.offset.x && a.offset.y == b.offset.y
+            && a.state === b.state
+            && stampsZipped !== undefined && stampsZipped.every(([as, bs]) => as.x == bs.x && as.y == bs.y)
+          );
+        },
+
+        getMouseDownState(args) {
+          if (args.previousState.state === "not held") {
+            return {
+              state: {
+                ...args.previousState,
+                state: "held",
+                pickupInfo: {
+                  mousePosition: args.mousePosition,
+                  offset: args.previousState.offset,
+                }
+              },
+              animateTransition: "never",
+              sendUpdateNow: true,
+            };
+          } else if (args.previousState.state === "stamping") {
+            // duplicate event? weird
+            return {
+              state: args.previousState,
+              animateTransition: "never",
+              sendUpdateNow: false,
+            };
+          } else { // "held"
+            const newOffset = {
+              x: args.previousState.pickupInfo.offset.x + (args.mousePosition.x - args.previousState.pickupInfo.mousePosition.x),
+              y: args.previousState.pickupInfo.offset.y + (args.mousePosition.y - args.previousState.pickupInfo.mousePosition.y),
+            };
+            if (inStampZone(newOffset)) {
+              return {
+                state: {
+                  offset: newOffset,
+                  // sanity check: only allow 20 stamps
+                  stamps: args.previousState.stamps.skip(Math.max(0, args.previousState.stamps.length - 19)).concat([newOffset]),
+                  state: "stamping",
+                  pickupInfo: args.previousState.pickupInfo,
+                },
+                animateTransition: "never",
+                sendUpdateNow: true,
+              };
+            } else {
+              return {
+                state: {
+                  ...stampInitialNetworkState,
+                  stamps: args.previousState.stamps,
+                  state: "not held",
+                },
+                animateTransition: "always",
+                sendUpdateNow: true,
+              };
+            }
+          }
+        },
+
+        getMouseUpState({ previousState }) {
+          if (previousState.state === "held") {
+            // mouse up happened after stamp has just been picked up
+            return { state: previousState, animateTransition: "never", sendUpdateNow: false };
+          } else if (previousState.state === "not held") {
+            // mouse up happened in the middle of stamp being put back
+            return {
+              state: {
+                ...stampInitialNetworkState,
+                stamps: previousState.stamps,
+                state: "not held",
+              },
+              animateTransition: "if existing",
+              sendUpdateNow: true,
+            };
+          } else {
+            // mouse up to lift from stamp
+            return {
+              state: {
+                ...previousState,
+                state: "held",
+              },
+              animateTransition: "never",
+              sendUpdateNow: true,
+            }
+          }
+        },
+
+        getMouseMoveState(args) {
+          if (args.previousState.state === "not held") {
+            // mouse move happened in the middle of stamp being put back
+            return {
+              state: {
+                ...stampInitialNetworkState,
+                stamps: args.previousState.stamps,
+                state: "not held",
+              },
+              animateTransition: "if existing",
+              sendUpdateNow: true,
+            };
+          } else if (args.previousState.state === "stamping") {
+            // mouse move happened in the middle of stamping
+            return {
+              state: args.previousState,
+              animateTransition: "if existing",
+              sendUpdateNow: false,
+            };
+          } else {
+            // mouse move happened while holding
+            const newOffset = {
+              x: args.previousState.pickupInfo.offset.x + (args.mousePosition.x - args.previousState.pickupInfo.mousePosition.x),
+              y: args.previousState.pickupInfo.offset.y + (args.mousePosition.y - args.previousState.pickupInfo.mousePosition.y),
+            };
+            return {
+              state: {
+                ...args.previousState,
+                offset: newOffset,
+              },
+              animateTransition: "never",
+              sendUpdateNow: false,
+            }
+          }
+        },
+
+        animationFunction: stampUpdateAnimationFunction,
+        getInterruptedAnimationState(args) {
+          const interruptedOffset = {
+            x: args.startState.offset.x + (args.animationProgress * (args.endState.offset.x - args.startState.offset.x)),
+            y: args.startState.offset.y + (args.animationProgress * (args.endState.offset.y - args.startState.offset.y)),
+          };
+          return {
+            ...args.endState,
+            offset: interruptedOffset,
+          };
+        },
+      })
+    );
+
+  console.log(stampDragData);
+  console.log(currentRenderTimeMs);
+
+  const stampStateToStyle = (state:
+    & OfficerToolStampState
+    & (
+      | { state: "not held" }
+      | {
+        state: "held" | "stamping",
+        pickupInfo: {
+          mousePosition: { x: number, y: number },
+          offset: { x: number, y: number },
+        },
+      }
+    )): React.CSSProperties => {
+    return {
+      left: `${Math.round(state.offset.x)}px`,
+      bottom: `${0
+        - Math.round(state.offset.y)
+        + (state.state === "held" ? 10 : 0)
+        }px`,
+    };
+  }
+
+  return (
+    <Section title={props.title} style={{
+      opacity:
+        (allPaymentsData.length === 0 || postAnimationStepState.revealedPaymentsStates.length > 0)
+          ? 1 : 0
+    }}>
+      {
+        (() => {
+          if (allPaymentsData.length <= 2) {
+            return (
+              <div>
+                <div
+                  style={{
+                    display: "inline-block",
+                    width: "100%",
+                    textAlign: "center",
+                    backgroundImage: `url(${visaScrollImgSrc})`,
+                    backgroundSize: "contain",
+                    backgroundPosition: "center",
+                    backgroundRepeat: "no-repeat",
+                    zIndex: -4,
+                  }}>
+                  <div style={{ opacity: 0 }}>
+                    <div>~</div>
+                    <div>~</div>
+                  </div>
+                  {
+                    props.buildVisaBodyEle({
+                      paymentsData: allPaymentsData,
+                      buildVisaTextEle({ visaText, includesHeader }) {
+                        return (
+                          <div>
+                            {
+                              visaText
+                                .split("\n")
+                                .map((l, i) =>
+                                  l.trim() == ""
+                                    ? (<div style={{ opacity: 0 }}>~</div>)
+                                    : (
+                                      <div style={
+                                        (i == 0 && includesHeader)
+                                          ? {
+                                            fontSize: "130%",
+                                            fontWeight: "bold",
+                                          }
+                                          : {}
+                                      }>
+                                        {l}
+                                      </div>)
+                                )
+                            }
+                          </div>
+                        );
+                      },
+                    })
+                  }
+                  <div>
+                    <div style={{
+                      display: "inline-block",
+                      verticalAlign: "middle",
+                      marginRight: "30px"
+                    }}>
+                      Duty Officer:
+                    </div>
+                    <div style={{
+                      display: "inline-block",
+                      verticalAlign: "middle",
+                      fontSize: "200%",
+                      borderWidth: "2px",
+                      borderStyle: "dashed",
+                      borderRadius: "15px",
+                      borderColor: "black",
+                    }}>
+                      <div style={{ margin: "5px", }}>
+                        <div style={{
+                          opacity: 0,
+                        }}>
+                          {props.stampIcon}
+                        </div>
+                      </div>
+                      {
+                        (() => {
+                          const stamps = (
+                            (stampDragData.hasValue === true)
+                              ? opt(stampDragData.value.localState.stamps)
+                              : (props.stamps.length > 0)
+                                ? opt(props.stamps)
+                                : nullopt
+                          );
+                          return (
+                            <div style={{ position: "relative" }}>
+                              {
+                                (stamps.hasValue === true)
+                                  ? (
+                                    stamps.value.map((stamp, iStamp) => (
+                                      <div
+                                        key={`payment_area_stamp_${iStamp}`}
+                                        style={{
+                                          margin: "5px",
+                                          position: "absolute",
+                                          left: `${0 + stamp.x}px`,
+                                          bottom: `${0 - stamp.y}px`,
+                                          zIndex: iStamp,
+                                        }}
+                                      >
+                                        {props.stampIcon}
+                                      </div>
+                                    ))
+                                  )
+                                  : undefined
+                              }
+                              <img
+                                src={stampImgSrc}
+                                draggable={false} // just prevents mouse events from being suppressed by drag events
+                                onMouseDown={(event) => { onStampMouseDownHandler(event.nativeEvent); }}
+                                style={{
+                                  opacity: stampDragData.hasValue === true ? 1 : 0,
+                                  position: "absolute",
+                                  ...(
+                                    (stampDragData.hasValue === true && stampDragData.value.animation.hasValue === false)
+                                      ? stampStateToStyle(stampDragData.value.localState)
+                                      : {}
+                                  ),
+                                  width: "100%",
+                                  zIndex: 3 + (stamps.hasValue === true ? stamps.value.length : 0),
+                                  animationName:
+                                    (stampDragData.hasValue === true && stampDragData.value.animation.hasValue === true)
+                                      ? (
+                                        `payment_stamp_animation`
+                                        + `_${Math.round(stampDragData.value.localState.offset.x)}_${Math.round(stampDragData.value.localState.offset.y)}_${stampDragData.value.localState.state.replace(" ", "")}`
+                                        + `_${Math.round(stampDragData.value.animation.value.destLocalState.offset.x)}_${Math.round(stampDragData.value.animation.value.destLocalState.offset.y)}_${stampDragData.value.animation.value.destLocalState.state.replace(" ", "")}`
+                                      )
+                                      : undefined,
+                                  animationDuration: `${stampUpdateAnimationDurationMs}ms`,
+                                  animationIterationCount: 1,
+                                  animationTimingFunction: stampUpdateAnimationFunction,
+                                  animationFillMode: "both",
+                                  animationDirection: "normal",
+                                  animationDelay: `${Math.floor(
+                                    (stampDragData.hasValue == false || stampDragData.value.animation.hasValue == false)
+                                      ? 0
+                                      : (-Math.min( // negative delay starts animation in middle of animation
+                                        (currentRenderTimeMs - stampDragData.value.animation.value.animationStartTimeMs),
+                                        stampUpdateAnimationDurationMs
+                                      ))
+                                  )}ms`,
+                                }}
+                                onAnimationEnd={onStampAnimationComplete}
+                              />
+                              { // stamp animation Keyframes
+                                (stampDragData.hasValue == true && stampDragData.value.animation.hasValue == true)
+                                  ? (
+                                    <Keyframes
+                                      name={
+                                        `payment_stamp_animation`
+                                        + `_${Math.round(stampDragData.value.localState.offset.x)}_${Math.round(stampDragData.value.localState.offset.y)}_${stampDragData.value.localState.state.replace(" ", "")}`
+                                        + `_${Math.round(stampDragData.value.animation.value.destLocalState.offset.x)}_${Math.round(stampDragData.value.animation.value.destLocalState.offset.y)}_${stampDragData.value.animation.value.destLocalState.state.replace(" ", "")}`
+                                      }
+                                      from={stampStateToStyle(stampDragData.value.localState)}
+                                      to={stampStateToStyle(stampDragData.value.animation.value.destLocalState)}
+                                    />
+                                  )
+                                  : undefined
+                              }
+                            </div>
+                          );
+                        })()
+                      }
+                    </div>
+                  </div>
+                  <div style={{ opacity: 0 }}>
+                    <div>~</div>
+                    <div>~</div>
+                  </div>
+                </div>
+              </div>
+            )
+          } else {
+            // this case should not be used yet -- just a temporary placeholder
+            return (
+              <div>
+                {
+                  allPaymentsData
+                    .map((paymentData) => {
+                      return (
+                        <Section
+                          key={`menu_game_payment_area_${iPlayerToNum(paymentData.payment.iPlayerGiver)}`}
+                          title={`Player ${iPlayerToNum(paymentData.payment.iPlayerGiver)} pays:`}
+                          style={{
+                            opacity:
+                              (paymentData.preAnimationStepPaymentState === "not yet revealed" && paymentData.postAnimationStepPaymentState === "not yet revealed")
+                                ? 0
+                                : 1
+                          }}
+                        >
+                          {paymentData.givingListEle}
+                        </Section>
+                      );
+                    })
+                }
+              </div>
+            );
+          }
+        })()
+      }
+    </Section>
+  );
 }
 
 export default function MenuGame(props: MenuGameProps) {
@@ -5179,7 +5815,120 @@ export default function MenuGame(props: MenuGameProps) {
             </Section>
 
             <Section id="menu_game_working_center_customs" style={{ display: "inline-block", verticalAlign: "top", flexGrow: "1" }}>
-              <Section style={{ display: "inline-block", verticalAlign: "top", minWidth: "400px" }} />
+              <Section style={{ display: "inline-block", verticalAlign: "top", minWidth: "400px" }} >
+                { // <Section Proposal
+                  (
+                    clientGameState.state == "Customs"
+                    && clientGameState.customsState == "interrogating"
+                    && clientGameState.proposedDeal.hasValue == true
+                  )
+                    ? (() => {
+                      const proposedDeal = clientGameState.proposedDeal;
+                      const iPlayerActiveTrader = clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader;
+                      const givingList = (args: { givingIsOfficer: boolean }) => (
+                        <div>
+                          {
+                            (args.givingIsOfficer)
+                              ? (<div>Won't search {clientGameState.localActiveTrader ? "your" : `${props.clients.get(iPlayerActiveTrader).name}'s`} cart</div>)
+                              : (((args.givingIsOfficer) ? proposedDeal.value.officerGives : proposedDeal.value.traderGives).money === 0)
+                                ? (<span>Nothing</span>)
+                                : undefined
+                          }
+                          {
+                            [
+                              {
+                                icon: moneyIcon,
+                                amount: ((args.givingIsOfficer) ? proposedDeal.value.officerGives : proposedDeal.value.traderGives).money
+                              }
+                            ]
+                              .filter(s => s.amount > 0)
+                              .map(s => (
+                                <div>{s.amount} {s.icon}</div>
+                              ))
+                          }
+                        </div>
+                      );
+                      const localInvolved = (clientGameState.localOfficer || clientGameState.localActiveTrader);
+                      const waitingOnLocal =
+                        localInvolved
+                        && (
+                          (clientGameState.localOfficer && clientGameState.proposedDeal.value.waitingOnOfficer)
+                          || (clientGameState.localActiveTrader && !clientGameState.proposedDeal.value.waitingOnOfficer)
+                        );
+
+                      return (
+                        <Section
+                          title={`${(
+                            (localInvolved && !waitingOnLocal)
+                              ? "You"
+                              : props.clients.get(clientGameState.proposedDeal.value.waitingOnOfficer ? iPlayerActiveTrader : iPlayerOfficer).name
+                          )} proposed deal:`
+                          }
+                        >
+                          <Section>
+                            <Section
+                              title={clientGameState.localActiveTrader ? "You give:" : `Trader ${props.clients.get(iPlayerActiveTrader).name} gives:`}
+                              style={{ display: "inline-block" }}
+                            >
+                              {givingList({ givingIsOfficer: false })}
+                            </Section>
+                            <Section
+                              title={clientGameState.localOfficer ? "You give:" : `Officer ${props.clients.get(iPlayerOfficer).name} gives:`}
+                              style={{ display: "inline-block" }}
+                            >
+                              {givingList({ givingIsOfficer: true })}
+                            </Section>
+                          </Section>
+                          { // buttons
+                            (waitingOnLocal)
+                              ? (
+                                <div>
+                                  <button
+                                    onClick={() => {
+                                      clientSendClientEventToServer({
+                                        type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
+                                        data: {
+                                          sourceClientId: props.localInfo.clientId,
+                                          action: {
+                                            action: "reject deal"
+                                          }
+                                        }
+                                      })
+                                    }}
+                                  >
+                                    Reject Deal
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      clientSendClientEventToServer({
+                                        type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
+                                        data: {
+                                          sourceClientId: props.localInfo.clientId,
+                                          action: {
+                                            action: "accept deal"
+                                          }
+                                        }
+                                      })
+                                    }}
+                                  >
+                                    Accept Deal
+                                  </button>
+                                </div>
+                              )
+                              : (localInvolved)
+                                ? (
+                                  <div>
+                                    Waiting for other player to respond<AnimatedEllipses />
+                                  </div>
+                                )
+                                : undefined
+                          }
+                        </Section>
+                      );
+                    })()
+                    : undefined
+                }
+              </Section>
 
               { // <Section Suspect Cart
                 (() => {
@@ -5483,143 +6232,32 @@ export default function MenuGame(props: MenuGameProps) {
               }
 
               <Section style={{ display: "inline-block", verticalAlign: "top", minWidth: "400px" }}>
-                { // <Section Proposal
+                { // <Section Entry Visa
                   (
                     clientGameState.state == "Customs"
-                    && clientGameState.customsState == "interrogating"
-                    && clientGameState.proposedDeal.hasValue == true
-                  )
-                    ? (() => {
-                      const proposedDeal = clientGameState.proposedDeal;
-                      const iPlayerActiveTrader = clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader;
-                      const givingList = (args: { givingIsOfficer: boolean }) => (
-                        <div>
-                          {
-                            (args.givingIsOfficer)
-                              ? (<div>Won't search {clientGameState.localActiveTrader ? "your" : `${props.clients.get(iPlayerActiveTrader).name}'s`} cart</div>)
-                              : undefined
-                          }
-                          {
-                            [
-                              {
-                                icon: moneyIcon,
-                                amount: ((args.givingIsOfficer) ? proposedDeal.value.officerGives : proposedDeal.value.traderGives).money
-                              }
-                            ]
-                              .filter(s => s.amount > 0)
-                              .map(s => (
-                                <div>{s.amount} {s.icon}</div>
-                              ))
-                          }
-                        </div>
-                      );
-                      const localInvolved = (clientGameState.localOfficer || clientGameState.localActiveTrader);
-                      const waitingOnLocal =
-                        localInvolved
-                        && (
-                          (clientGameState.localOfficer && clientGameState.proposedDeal.value.waitingOnOfficer)
-                          || (clientGameState.localActiveTrader && !clientGameState.proposedDeal.value.waitingOnOfficer)
-                        );
-
-                      return (
-                        <Section
-                          title={`${(
-                            (localInvolved && !waitingOnLocal)
-                              ? "You"
-                              : props.clients.get(clientGameState.proposedDeal.value.waitingOnOfficer ? iPlayerActiveTrader : iPlayerOfficer).name
-                          )} proposed deal:`
-                          }
-                        >
-                          <Section>
-                            <Section
-                              title={clientGameState.localActiveTrader ? "You give:" : `Trader ${props.clients.get(iPlayerActiveTrader).name} gives:`}
-                              style={{ display: "inline-block" }}
-                            >
-                              {givingList({ givingIsOfficer: false })}
-                            </Section>
-                            <Section
-                              title={clientGameState.localOfficer ? "You give:" : `Officer ${props.clients.get(iPlayerOfficer).name} gives:`}
-                              style={{ display: "inline-block" }}
-                            >
-                              {givingList({ givingIsOfficer: true })}
-                            </Section>
-                          </Section>
-                          { // buttons
-                            (waitingOnLocal)
-                              ? (
-                                <div>
-                                  <button
-                                    onClick={() => {
-                                      clientSendClientEventToServer({
-                                        type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
-                                        data: {
-                                          sourceClientId: props.localInfo.clientId,
-                                          action: {
-                                            action: "reject deal"
-                                          }
-                                        }
-                                      })
-                                    }}
-                                  >
-                                    Reject Deal
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      clientSendClientEventToServer({
-                                        type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
-                                        data: {
-                                          sourceClientId: props.localInfo.clientId,
-                                          action: {
-                                            action: "accept deal"
-                                          }
-                                        }
-                                      })
-                                    }}
-                                  >
-                                    Accept Deal
-                                  </button>
-                                </div>
-                              )
-                              : (localInvolved)
-                                ? (
-                                  <div>
-                                    Waiting for other player to respond<AnimatedEllipses />
-                                  </div>
-                                )
-                                : undefined
-                          }
-                        </Section>
-                      );
-                    })()
-                    : undefined
-                }
-                { // <Section Payment
-                  (
-                    clientGameState.state == "Customs"
-                    && clientGameState.customsState == "resolving"
-                    && (clientGameState.result.result != "ignored")
+                    && (
+                      clientGameState.customsState == "resolving"
+                      || clientGameState.customsState === "interrogating"
+                    )
                   )
                     ? (() => {
                       const iPlayerActiveTrader = clientGameState.localActiveTrader == true ? iPlayerLocal : clientGameState.iPlayerActiveTrader;
                       const activeCart = clientGameState.cartStates.get(iPlayerActiveTrader);
+                      if (activeCart.packed == false) {
+                        // TODO fix shouldn't happen
+                        return (<div></div>);
+                      }
 
-                      const stampInitialNetworkState: OfficerToolStampState & { state: "not held" } = {
-                        offset: {
-                          x: 0,
-                          y: -100,
-                        },
-                        stamps: [],
-                        state: "not held",
-                      };
+
                       const cartOfficerToolsProps: CartOfficerToolsProps = (
                         {
-                          crowbarPresent: false,
-                          stampPresent: clientGameState.result.resultState.resultState === "confirming",
+                          crowbarPresent: clientGameState.customsState === "interrogating" && clientGameState.crowbarSelected === true,
+                          stampPresent: (
+                            (clientGameState.customsState === "resolving" && clientGameState.result.resultState.resultState === "confirming")
+                            || (clientGameState.customsState === "interrogating" && clientGameState.entryVisaVisible === true)
+                          ),
                           controls:
-                            (
-                              iPlayerToNum(iPlayerLocal) == iPlayerToNum(iPlayerOfficer)
-                              && clientGameState.result.resultState.resultState === "confirming"
-                            )
+                            (iPlayerToNum(iPlayerLocal) == iPlayerToNum(iPlayerOfficer))
                               ? {
                                 localControllable: true,
                                 onInternalOfficerToolUpdate: (() => {
@@ -5662,7 +6300,11 @@ export default function MenuGame(props: MenuGameProps) {
                                             data: {
                                               sourceClientId: props.localInfo.clientId,
                                               action: {
-                                                action: "confirm resolve",
+                                                action: (
+                                                  (clientGameState.customsState === "interrogating")
+                                                    ? "ignore cart"
+                                                    : "confirm resolve"
+                                                ),
                                                 entryVisaStamps: stamp.stamps,
                                               }
                                             }
@@ -5698,647 +6340,27 @@ export default function MenuGame(props: MenuGameProps) {
                               : {
                                 localControllable: false,
                                 eventHandling: {
-                                  registerEventHandlers: (args) => {
+                                  registerEventHandlers: ((args) => {
                                     onExternalOfficerToolUpdateRegistrations.push(opt(args.onExternalOfficerToolUpdate));
                                     return { handlerRegistrationId: onExternalOfficerToolUpdateRegistrations.length - 1 };
-                                  },
-                                  unregisterEventHandlers: (handlerRegistrationId) => {
+                                  }),
+                                  unregisterEventHandlers: ((handlerRegistrationId) => {
                                     onExternalOfficerToolUpdateRegistrations[handlerRegistrationId] = nullopt;
-                                  },
+                                  }),
                                 }
                               }
                         }
                       );
 
-                      const PaymentArea = (paymentAreaProps: {
-                        title: string,
-                        buildVisaBodyEle: (args: {
-                          paymentsData: {
-                            givingListEle: React.ReactNode,
-                            payment: {
-                              iPlayerGiver: ValidPlayerIndex,
-                              payment: {
-                                money: number,
-                              },
-                            },
-                            preAnimationStepPaymentState: "revealed" | "collected" | "distributed" | "not yet revealed",
-                            postAnimationStepPaymentState: "revealed" | "collected" | "distributed" | "not yet revealed",
-                          }[],
-                          buildVisaTextEle: (args: { visaText: string, includesHeader: boolean }) => React.ReactNode,
-                        }) => React.ReactNode,
-                        animation: Optional<GameAnimationSequence>,
-                        officerTools: CartOfficerToolsProps,
-                      }) => {
-                        const paymentsMatch = (
-                          a: { iPlayerGiver: ValidPlayerIndex, payment: { money: number } },
-                          b: { iPlayerGiver: ValidPlayerIndex, payment: { money: number } },
-                        ) => iPlayerToNum(a.iPlayerGiver) === iPlayerToNum(b.iPlayerGiver);
+                      const stamps = (
+                        (clientGameState.customsState === "resolving" && clientGameState.result.resultState.resultState === "continuing")
+                          ? clientGameState.result.resultState.entryVisaStamps
+                          : []
+                      );
 
-                        const { iGameAnimationStep, gameAnimationStep, preAnimationStepState, postAnimationStepState, postAnimationSequenceState } = (
-                          useGameAnimationStates<{
-                            revealedPaymentsStates: {
-                              payment: {
-                                iPlayerGiver: ValidPlayerIndex,
-                                payment: { money: number },
-                              }
-                              state: "revealed" | "collected" | "distributed",
-                            }[],
-                            onStateReached: Optional<() => void>,
-                          }>({
-                            animation: paymentAreaProps.animation,
-                            propsState: {
-                              revealedPaymentsStates: [],
-                              onStateReached: nullopt,
-                            },
-
-                            getPostStepState({
-                              step,
-                              callAllOnCompletes,
-                              previousState,
-                            }) {
-                              if (step.type === "payment") {
-                                const newRevealedPaymentsStates = previousState.revealedPaymentsStates.shallowCopy();
-                                const stepPaymentState = (() => {
-                                  const stepPaymentInitialState = {
-                                    payment: {
-                                      iPlayerGiver: step.iPlayerGiver,
-                                      payment: step.payment,
-                                    },
-                                    state: "revealed" as "revealed" | "collected" | "distributed",
-                                  };
-                                  for (let i = 0; i < newRevealedPaymentsStates.length; i++) {
-                                    const paymentState = newRevealedPaymentsStates[i];
-                                    if (paymentState === undefined) continue; // TODO fix this should never happen
-                                    if (paymentsMatch(paymentState.payment, stepPaymentInitialState.payment)) {
-                                      newRevealedPaymentsStates[i] = stepPaymentInitialState;
-                                      return stepPaymentInitialState;
-                                    }
-                                  }
-                                  // else
-                                  newRevealedPaymentsStates.push(stepPaymentInitialState);
-                                  return stepPaymentInitialState;
-                                })();
-
-                                if (step.action === "reveal if not yet revealed") {
-                                  // there are no paymentStates where this has not yet happened. Leave as-is.
-                                } else if (step.action === "give" && stepPaymentState.state === "revealed") {
-                                  stepPaymentState.state = "collected";
-                                } else if (step.action === "receive") {
-                                  // there are no paymentStates where this has happened (except distributed so okay to overwrite)
-                                  stepPaymentState.state = "distributed";
-                                }
-
-                                return {
-                                  ...previousState,
-                                  revealedPaymentsStates: newRevealedPaymentsStates,
-                                  onStateReached: opt(callAllOnCompletes),
-                                };
-                              } else {
-                                return {
-                                  ...previousState,
-                                  onStateReached: nullopt,
-                                };
-                              }
-                            },
-
-                            getPostSequenceState({ previousState }) {
-                              return {
-                                ...previousState,
-                                onStateReached: nullopt,
-                              }
-                            },
-                          })
-                        );
-
-                        React.useEffect(() => {
-                          if (
-                            gameAnimationStep.hasValue === true
-                            && gameAnimationStep.value.step.type === "payment"
-                            && gameAnimationStep.value.step.action === "reveal if not yet revealed"
-                          ) {
-                            gameAnimationStep.value.onCompleteRegistrations.forEach(c => c());
-                          }
-                        }, [iGameAnimationStep]);
-
-                        const allPaymentsData = (
-                          postAnimationSequenceState.revealedPaymentsStates
-                            .map(finalPaymentState => ({
-                              payment: finalPaymentState.payment,
-                              preAnimationStepPaymentState:
-                                preAnimationStepState.revealedPaymentsStates
-                                  .filter(paymentState => paymentsMatch(paymentState.payment, finalPaymentState.payment))
-                                [0]
-                                  ?.state
-                                ?? ("not yet revealed" as "not yet revealed"),
-                              postAnimationStepPaymentState:
-                                postAnimationStepState.revealedPaymentsStates
-                                  .filter(paymentState => paymentsMatch(paymentState.payment, finalPaymentState.payment))
-                                [0]
-                                  ?.state
-                                ?? ("not yet revealed" as "not yet revealed"),
-                            }))
-                            .map(paymentData => ({
-                              ...paymentData,
-                              givingListEle: (
-                                <div>
-                                  {
-                                    [
-                                      {
-                                        icon: moneyIcon,
-                                        amount: paymentData.payment.payment.money
-                                      }
-                                    ]
-                                      .filter(s => s.amount > 0)
-                                      .map(s => (
-                                        <span key={`menu_game_payment_player_${iPlayerToNum(paymentData.payment.iPlayerGiver)}_icon_${s.icon}`}>
-                                          {s.amount}{" "}
-                                          <span
-                                            style={{
-                                              opacity:
-                                                (paymentData.preAnimationStepPaymentState === "collected" && paymentData.postAnimationStepPaymentState === "collected")
-                                                  ? 1
-                                                  : 0.3
-                                            }}
-                                            id={`menu_game_payment_player_${iPlayerToNum(paymentData.payment.iPlayerGiver)}_item_money`}>{s.icon}
-                                          </span>
-                                        </span>
-                                      ))
-                                  }
-                                </div>
-                              )
-                            }))
-                        );
-
-                        const currentRenderTimeMs = Date.now();
-
-                        const stampUpdateAnimationFunction = "linear" as "linear";
-
-                        const stampZoneMaximumY = 15;
-                        const inStampZone = (offset: { x: number, y: number }) => (
-                          offset.x >= -30 && offset.x <= 30
-                          && offset.y >= -30 && offset.y <= stampZoneMaximumY
-                        );
-
-                        const {
-                          localData: stampDragData,
-                          onToolMouseDownHandler: onStampMouseDownHandler,
-                          toolUpdateAnimationDurationMs: stampUpdateAnimationDurationMs,
-                          onAnimationComplete: onStampAnimationComplete,
-                        } = (
-                            useNetworkedOfficerToolState<
-                              & OfficerToolStampState
-                              & (
-                                | { state: "not held" }
-                                | {
-                                  state: "held" | "stamping",
-                                  pickupInfo: {
-                                    mousePosition: { x: number, y: number },
-                                    offset: { x: number, y: number },
-                                  },
-                                }
-                              )
-                            >({
-                              propsTools: paymentAreaProps.officerTools,
-                              networkStateToLocalState({ networkState, previousState }) {
-                                if (networkState.hasValue === true && networkState.value.stamp.hasValue === true) {
-                                  return opt({
-                                    state: {
-                                      offset: networkState.value.stamp.value.offset,
-                                      stamps: networkState.value.stamp.value.stamps,
-                                      ...(
-                                        // networkStateToLocalState is only used for initial state (which should always be not held)
-                                        // and for external updates (in which case we're not the officer so mousePickupPosition isn't used)
-                                        (networkState.value.stamp.value.state === "not held")
-                                          ? { state: "not held" }
-                                          : {
-                                            state: networkState.value.stamp.value.state,
-                                            pickupInfo: {
-                                              mousePosition: { x: 0, y: 0 },
-                                              offset: { x: 0, y: 0 }
-                                            }
-                                          }
-                                      )
-                                    },
-                                    animateTransition:
-                                      (previousState.hasValue === false)
-                                        ? "always"
-                                        : (previousState.value.state === "stamping" || networkState.value.stamp.value.state === "stamping")
-                                          ? "never"
-                                          : (
-                                            previousState.value.offset.x !== networkState.value.stamp.value.offset.x
-                                            || previousState.value.offset.y !== networkState.value.stamp.value.offset.y
-                                          )
-                                            ? "always"
-                                            : "if existing",
-                                  });
-                                } else if (paymentAreaProps.officerTools.stampPresent) {
-                                  return opt({
-                                    state: stampInitialNetworkState,
-                                    animateTransition: "always",
-                                  });
-                                } else {
-                                  return nullopt;
-                                }
-                              },
-                              localStateToNetworkStateUpdate(localState) {
-                                return {
-                                  stamp: opt(localState),
-                                  crowbar: nullopt,
-                                };
-                              },
-
-                              stateIsOfficerControllable(localState) {
-                                return localState.stamps.length == 0 || (localState.state !== "not held");
-                              },
-
-                              statesEqual(a, b) {
-                                const stampsZipped = a.stamps.zip(b.stamps);
-                                return (
-                                  a.offset.x == b.offset.x && a.offset.y == b.offset.y
-                                  && a.state === b.state
-                                  && stampsZipped !== undefined && stampsZipped.every(([as, bs]) => as.x == bs.x && as.y == bs.y)
-                                );
-                              },
-
-                              getMouseDownState(args) {
-                                if (args.previousState.state === "not held") {
-                                  return {
-                                    state: {
-                                      ...args.previousState,
-                                      state: "held",
-                                      pickupInfo: {
-                                        mousePosition: args.mousePosition,
-                                        offset: args.previousState.offset,
-                                      }
-                                    },
-                                    animateTransition: "never",
-                                    sendUpdateNow: true,
-                                  };
-                                } else if (args.previousState.state === "stamping") {
-                                  // duplicate event? weird
-                                  return {
-                                    state: args.previousState,
-                                    animateTransition: "never",
-                                    sendUpdateNow: false,
-                                  };
-                                } else { // "held"
-                                  const newOffset = {
-                                    x: args.previousState.pickupInfo.offset.x + (args.mousePosition.x - args.previousState.pickupInfo.mousePosition.x),
-                                    y: args.previousState.pickupInfo.offset.y + (args.mousePosition.y - args.previousState.pickupInfo.mousePosition.y),
-                                  };
-                                  if (inStampZone(newOffset)) {
-                                    return {
-                                      state: {
-                                        offset: newOffset,
-                                        // sanity check: only allow 20 stamps
-                                        stamps: args.previousState.stamps.skip(Math.max(0, args.previousState.stamps.length - 19)).concat([newOffset]),
-                                        state: "stamping",
-                                        pickupInfo: args.previousState.pickupInfo,
-                                      },
-                                      animateTransition: "never",
-                                      sendUpdateNow: true,
-                                    };
-                                  } else {
-                                    return {
-                                      state: {
-                                        ...stampInitialNetworkState,
-                                        stamps: args.previousState.stamps,
-                                        state: "not held",
-                                      },
-                                      animateTransition: "always",
-                                      sendUpdateNow: true,
-                                    };
-                                  }
-                                }
-                              },
-
-                              getMouseUpState({ previousState }) {
-                                if (previousState.state === "held") {
-                                  // mouse up happened after stamp has just been picked up
-                                  return { state: previousState, animateTransition: "never", sendUpdateNow: false };
-                                } else if (previousState.state === "not held") {
-                                  // mouse up happened in the middle of stamp being put back
-                                  return {
-                                    state: {
-                                      ...stampInitialNetworkState,
-                                      stamps: previousState.stamps,
-                                      state: "not held",
-                                    },
-                                    animateTransition: "if existing",
-                                    sendUpdateNow: true,
-                                  };
-                                } else {
-                                  // mouse up to lift from stamp
-                                  return {
-                                    state: {
-                                      ...previousState,
-                                      state: "held",
-                                    },
-                                    animateTransition: "never",
-                                    sendUpdateNow: true,
-                                  }
-                                }
-                              },
-
-                              getMouseMoveState(args) {
-                                if (args.previousState.state === "not held") {
-                                  // mouse move happened in the middle of stamp being put back
-                                  return {
-                                    state: {
-                                      ...stampInitialNetworkState,
-                                      stamps: args.previousState.stamps,
-                                      state: "not held",
-                                    },
-                                    animateTransition: "if existing",
-                                    sendUpdateNow: true,
-                                  };
-                                } else if (args.previousState.state === "stamping") {
-                                  // mouse move happened in the middle of stamping
-                                  return {
-                                    state: args.previousState,
-                                    animateTransition: "if existing",
-                                    sendUpdateNow: false,
-                                  };
-                                } else {
-                                  // mouse move happened while holding
-                                  const newOffset = {
-                                    x: args.previousState.pickupInfo.offset.x + (args.mousePosition.x - args.previousState.pickupInfo.mousePosition.x),
-                                    y: args.previousState.pickupInfo.offset.y + (args.mousePosition.y - args.previousState.pickupInfo.mousePosition.y),
-                                  };
-                                  return {
-                                    state: {
-                                      ...args.previousState,
-                                      offset: newOffset,
-                                    },
-                                    animateTransition: "never",
-                                    sendUpdateNow: false,
-                                  }
-                                }
-                              },
-
-                              animationFunction: stampUpdateAnimationFunction,
-                              getInterruptedAnimationState(args) {
-                                const interruptedOffset = {
-                                  x: args.startState.offset.x + (args.animationProgress * (args.endState.offset.x - args.startState.offset.x)),
-                                  y: args.startState.offset.y + (args.animationProgress * (args.endState.offset.y - args.startState.offset.y)),
-                                };
-                                return {
-                                  ...args.endState,
-                                  offset: interruptedOffset,
-                                };
-                              },
-                            })
-                          );
-
-                        console.log(stampDragData);
-                        console.log(currentRenderTimeMs);
-
-                        const stampStateToStyle = (state:
-                          & OfficerToolStampState
-                          & (
-                            | { state: "not held" }
-                            | {
-                              state: "held" | "stamping",
-                              pickupInfo: {
-                                mousePosition: { x: number, y: number },
-                                offset: { x: number, y: number },
-                              },
-                            }
-                          )): React.CSSProperties => {
-                          return {
-                            left: `${Math.round(state.offset.x)}px`,
-                            bottom: `${0
-                              - Math.round(state.offset.y)
-                              + (state.state === "held" ? 10 : 0)
-                              }px`,
-                          };
-                        }
-
+                      if (clientGameState.customsState === "resolving" && clientGameState.result.result == "searched") {
                         return (
-                          <Section title={paymentAreaProps.title} style={{
-                            opacity: postAnimationStepState.revealedPaymentsStates.length > 0 ? 1 : 0
-                          }}>
-                            {
-                              (() => {
-                                if (allPaymentsData.length <= 2) {
-                                  return (
-                                    <div>
-                                      <div
-                                        style={{
-                                          display: "inline-block",
-                                          width: "100%",
-                                          textAlign: "center",
-                                          backgroundImage: `url(${visaScrollImgSrc})`,
-                                          backgroundSize: "contain",
-                                          backgroundPosition: "center",
-                                          backgroundRepeat: "no-repeat",
-                                          zIndex: -4,
-                                        }}>
-                                        <div style={{ opacity: 0 }}>
-                                          <div>~</div>
-                                          <div>~</div>
-                                        </div>
-                                        {
-                                          paymentAreaProps.buildVisaBodyEle({
-                                            paymentsData: allPaymentsData,
-                                            buildVisaTextEle({ visaText, includesHeader }) {
-                                              return (
-                                                <div>
-                                                  {
-                                                    visaText
-                                                      .split("\n")
-                                                      .map((l, i) =>
-                                                        l.trim() == ""
-                                                          ? (<div style={{ opacity: 0 }}>~</div>)
-                                                          : (
-                                                            <div style={
-                                                              (i == 0 && includesHeader)
-                                                                ? {
-                                                                  fontSize: "130%",
-                                                                  fontWeight: "bold",
-                                                                }
-                                                                : {}
-                                                            }>
-                                                              {l}
-                                                            </div>)
-                                                      )
-                                                  }
-                                                </div>
-                                              );
-                                            },
-                                          })
-                                        }
-                                        <div>
-                                          <div style={{
-                                            display: "inline-block",
-                                            verticalAlign: "middle",
-                                            marginRight: "30px"
-                                          }}>
-                                            Duty Officer:
-                                          </div>
-                                          <div style={{
-                                            display: "inline-block",
-                                            verticalAlign: "middle",
-                                            fontSize: "200%",
-                                            borderWidth: "2px",
-                                            borderStyle: "dashed",
-                                            borderRadius: "15px",
-                                            borderColor: "black",
-                                          }}>
-                                            <div style={{ margin: "5px", }}>
-                                              <div style={{
-                                                opacity: 0,
-                                              }}>
-                                                {props.clients.get(iPlayerOfficer).icon}
-                                              </div>
-                                            </div>
-                                            {
-                                              (() => {
-                                                const stamps = (
-                                                  (stampDragData.hasValue === true)
-                                                    ? opt(stampDragData.value.localState.stamps)
-                                                    : (clientGameState.result.resultState.resultState === "continuing" && clientGameState.result.result !== "ignored")
-                                                      ? opt(clientGameState.result.resultState.entryVisaStamps)
-                                                      : nullopt
-                                                );
-                                                return (
-                                                  <div style={{ position: "relative" }}>
-                                                    {
-                                                      (stamps.hasValue === true)
-                                                        ? (
-                                                          stamps.value.map((stamp, iStamp) => (
-                                                            <div
-                                                              key={`payment_area_stamp_${iStamp}`}
-                                                              style={{
-                                                                margin: "5px",
-                                                                position: "absolute",
-                                                                left: `${0 + stamp.x}px`,
-                                                                bottom: `${0 - stamp.y}px`,
-                                                                zIndex: iStamp,
-                                                              }}
-                                                            >
-                                                              {props.clients.get(iPlayerOfficer).icon}
-                                                            </div>
-                                                          ))
-                                                        )
-                                                        : undefined
-                                                    }
-                                                    <img
-                                                      src={stampImgSrc}
-                                                      draggable={false} // just prevents mouse events from being suppressed by drag events
-                                                      onMouseDown={(event) => { onStampMouseDownHandler(event.nativeEvent); }}
-                                                      style={{
-                                                        opacity: stampDragData.hasValue === true ? 1 : 0,
-                                                        position: "absolute",
-                                                        ...(
-                                                          (stampDragData.hasValue === true && stampDragData.value.animation.hasValue === false)
-                                                            ? stampStateToStyle(stampDragData.value.localState)
-                                                            : {}
-                                                        ),
-                                                        width: "100%",
-                                                        zIndex: 3 + (stamps.hasValue === true ? stamps.value.length : 0),
-                                                        animationName:
-                                                          (stampDragData.hasValue === true && stampDragData.value.animation.hasValue === true)
-                                                            ? (
-                                                              `payment_stamp_animation`
-                                                              + `_${Math.round(stampDragData.value.localState.offset.x)}_${Math.round(stampDragData.value.localState.offset.y)}_${stampDragData.value.localState.state.replace(" ", "")}`
-                                                              + `_${Math.round(stampDragData.value.animation.value.destLocalState.offset.x)}_${Math.round(stampDragData.value.animation.value.destLocalState.offset.y)}_${stampDragData.value.animation.value.destLocalState.state.replace(" ", "")}`
-                                                            )
-                                                            : undefined,
-                                                        animationDuration: `${stampUpdateAnimationDurationMs}ms`,
-                                                        animationIterationCount: 1,
-                                                        animationTimingFunction: stampUpdateAnimationFunction,
-                                                        animationFillMode: "both",
-                                                        animationDirection: "normal",
-                                                        animationDelay: `${Math.floor(
-                                                          (stampDragData.hasValue == false || stampDragData.value.animation.hasValue == false)
-                                                            ? 0
-                                                            : (-Math.min( // negative delay starts animation in middle of animation
-                                                              (currentRenderTimeMs - stampDragData.value.animation.value.animationStartTimeMs),
-                                                              stampUpdateAnimationDurationMs
-                                                            ))
-                                                        )}ms`,
-                                                      }}
-                                                      onAnimationEnd={onStampAnimationComplete}
-                                                    />
-                                                    { // stamp animation Keyframes
-                                                      (stampDragData.hasValue == true && stampDragData.value.animation.hasValue == true)
-                                                        ? (
-                                                          <Keyframes
-                                                            name={
-                                                              `payment_stamp_animation`
-                                                              + `_${Math.round(stampDragData.value.localState.offset.x)}_${Math.round(stampDragData.value.localState.offset.y)}_${stampDragData.value.localState.state.replace(" ", "")}`
-                                                              + `_${Math.round(stampDragData.value.animation.value.destLocalState.offset.x)}_${Math.round(stampDragData.value.animation.value.destLocalState.offset.y)}_${stampDragData.value.animation.value.destLocalState.state.replace(" ", "")}`
-                                                            }
-                                                            from={stampStateToStyle(stampDragData.value.localState)}
-                                                            to={stampStateToStyle(stampDragData.value.animation.value.destLocalState)}
-                                                          />
-                                                        )
-                                                        : undefined
-                                                    }
-                                                  </div>
-                                                );
-                                              })()
-                                            }
-                                          </div>
-                                        </div>
-                                        <div style={{ opacity: 0 }}>
-                                          <div>~</div>
-                                          <div>~</div>
-                                        </div>
-                                      </div>
-                                      <div style={{
-                                        opacity:
-                                          (clientGameState.result.resultState.resultState === "confirming" && clientGameState.localOfficer === true)
-                                            ? 1
-                                            : 0
-                                      }}>
-                                        <span>{
-                                          (stampDragData.hasValue === true && stampDragData.value.localState.stamps.length > 0)
-                                            ? `(drop the stamp to continue)`
-                                            : `(stamp the ${(clientGameState.result.result === "searched" ? "report" : "entry visa")} to continue)`
-                                        }</span>
-                                      </div>
-                                    </div>
-                                  )
-                                } else {
-                                  return (
-                                    <div>
-                                      {
-                                        allPaymentsData
-                                          .map((paymentData) => {
-                                            return (
-                                              <Section
-                                                key={`menu_game_payment_area_${iPlayerToNum(paymentData.payment.iPlayerGiver)}`}
-                                                title={`${props.clients.get(paymentData.payment.iPlayerGiver).name} pays:`}
-                                                style={{
-                                                  opacity:
-                                                    (paymentData.preAnimationStepPaymentState === "not yet revealed" && paymentData.postAnimationStepPaymentState === "not yet revealed")
-                                                      ? 0
-                                                      : 1
-                                                }}
-                                              >
-                                                {paymentData.givingListEle}
-                                              </Section>
-                                            );
-                                          })
-                                      }
-                                    </div>
-                                  );
-                                }
-                              })()
-                            }
-                          </Section>
-                        );
-                      }
-
-                      if (activeCart.packed == false) {
-                        // TODO fix shouldn't happen
-                        return (<div></div>);
-                      }
-                      if (clientGameState.result.result == "searched") {
-                        return (
-                          <PaymentArea
+                          <EntryVisa
                             key={`menu_game_payment_area_rerender_${renderCount.current}`}
                             title={activeCart.cart.products.every(p => p == activeCart.cart.claimedType) ? "Trader unreasonably searched!" : "Smuggling caught!"}
                             buildVisaBodyEle={(args) => {
@@ -6404,11 +6426,13 @@ export default function MenuGame(props: MenuGameProps) {
                             }}
                             animation={animation}
                             officerTools={cartOfficerToolsProps}
+                            stampIcon={props.clients.get(iPlayerOfficer).icon}
+                            stamps={stamps}
                           />
                         );
-                      } else { // deal struck
+                      } else if (clientGameState.customsState === "resolving" && clientGameState.result.result == "ignored for deal") { // deal struck
                         return (
-                          <PaymentArea
+                          <EntryVisa
                             key={`menu_game_payment_area_rerender_${renderCount.current}`}
                             title={"Deal accepted!"}
                             buildVisaBodyEle={(args) => {
@@ -6487,7 +6511,54 @@ export default function MenuGame(props: MenuGameProps) {
                             }}
                             animation={animation}
                             officerTools={cartOfficerToolsProps}
+                            stampIcon={props.clients.get(iPlayerOfficer).icon}
+                            stamps={stamps}
                           />
+                        );
+                      } else { // ignored or about to ignore
+                        return (
+                          <div
+                            style={{
+                              opacity: (clientGameState.customsState === "resolving" || clientGameState.entryVisaVisible === true) ? 1 : 0
+                            }}
+                          >
+                            <EntryVisa
+                              key={`menu_game_payment_area_rerender_${renderCount.current}`}
+                              title={"Entry Visa"}
+                              buildVisaBodyEle={(args) => {
+                                if (args.paymentsData.length > 0) {
+                                  // unexpected!
+                                  console.log(`Unexpected payments data for an ignore situation:`);
+                                  console.log(JSON.stringify(args.paymentsData));
+                                  return <div>An error occurred.</div>;
+                                }
+
+                                return (
+                                  <div>
+                                    {args.buildVisaTextEle({
+                                      includesHeader: true,
+                                      visaText:
+                                        `Entry Visa #${clientGameState.counters.entryVisa}
+                                    
+                                      The individual known as
+                                      ${props.clients.get(iPlayerActiveTrader).name}
+                                      is hereby permitted to enter
+                                      and conduct business in
+                                      ${props.settings.cityName},
+                                      recognized as being in
+                                      full complicance
+                                      with Trade Code § 438.
+                                      `
+                                    })}
+                                  </div>
+                                );
+                              }}
+                              animation={animation}
+                              officerTools={cartOfficerToolsProps}
+                              stampIcon={props.clients.get(iPlayerOfficer).icon}
+                              stamps={stamps}
+                            />
+                          </div>
                         );
                       }
                     })()

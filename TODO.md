@@ -13,7 +13,7 @@
 - pay fines with supplies products if out of money
 - (WIP) approval stamp officer tool
   - Todo:
-    - (WIP) tool available in interrogation customsState
+    - (DONE) tool available in interrogation customsState
     - special entry visa post-its
     - incident report incident field instead of section title
     - incident report legal contents wait until after stamp
