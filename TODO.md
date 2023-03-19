@@ -14,14 +14,14 @@
 - (WIP) approval stamp officer tool
   - Todo:
     - (DONE) tool available in interrogation customsState
-    - special entry visa post-its
-    - incident report incident field instead of section title
+    - clearer result visa
+      - incident report incident field instead of section title?
+      - entry visa text reveals like it's being written, and slows down on key words?
+      - special entry visa post-its?
     - incident report legal contents wait until after stamp
-    - stamp puts target around mouse, hovers (sorta-)far above
-      - target could go away when not inStampArea
+    - (DONE) stamp puts target around mouse, hovers (sorta-)far above
     - minimum delay from stamping->held?
       - could have a special animation? if it was seal wax
-    - 
 - hammer officer tool
 - make deals at any time
 - traders and officer select a particular recycle pool to discard recycled and illegal-caught contracts

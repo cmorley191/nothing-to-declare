@@ -3402,7 +3402,7 @@ function EntryVisa(props: {
   console.log(stampDragData);
   console.log(currentRenderTimeMs);
 
-  const stampStateToStyle = (state:
+  const stampStateToStyles = (state:
     & OfficerToolStampState
     & (
       | { state: "not held" }
@@ -3413,13 +3413,19 @@ function EntryVisa(props: {
           offset: { x: number, y: number },
         },
       }
-    )): React.CSSProperties => {
+    )): { stampImg: React.CSSProperties, stampTarget: React.CSSProperties } => {
     return {
-      left: `${Math.round(state.offset.x)}px`,
-      bottom: `${0
-        - Math.round(state.offset.y)
-        + (state.state === "held" ? 10 : 0)
-        }px`,
+      stampImg: {
+        left: `${Math.round(state.offset.x)}px`,
+        bottom: `${0
+          - Math.round(state.offset.y)
+          + (state.state === "held" ? 30 : 0)
+          }px`,
+      },
+      stampTarget: {
+        left: `${Math.round(state.offset.x)}px`,
+        bottom: `${0 - Math.round(state.offset.y)}px`,
+      }
     };
   }
 
@@ -3534,7 +3540,32 @@ function EntryVisa(props: {
                                   )
                                   : undefined
                               }
-                              <img
+                              <div // stamper target
+                                draggable={false} // just prevents mouse events from being suppressed by drag events
+                                onMouseDown={(event) => { onStampMouseDownHandler(event.nativeEvent); }}
+                                style={{
+                                  margin: "5px",
+                                  position: "absolute",
+                                  ...(
+                                    (stampDragData.hasValue === true)
+                                      ? stampStateToStyles(stampDragData.value.localState).stampTarget
+                                      : {}
+                                  ),
+                                  zIndex: 4 + (stamps.hasValue === true ? stamps.value.length : 0),
+                                  cursor: "pointer",
+                                  opacity:
+                                    (
+                                      props.officerTools.controls.localControllable === true
+                                      && stampDragData.hasValue === true
+                                      && stampDragData.value.localState.state === "held"
+                                      && inStampZone(stampDragData.value.localState.offset)
+                                    )
+                                      ? 0.3 : 0,
+                                }}
+                              >
+                                {props.stampIcon}
+                              </div>
+                              <img // stamper img
                                 src={stampImgSrc}
                                 draggable={false} // just prevents mouse events from being suppressed by drag events
                                 onMouseDown={(event) => { onStampMouseDownHandler(event.nativeEvent); }}
@@ -3543,11 +3574,12 @@ function EntryVisa(props: {
                                   position: "absolute",
                                   ...(
                                     (stampDragData.hasValue === true && stampDragData.value.animation.hasValue === false)
-                                      ? stampStateToStyle(stampDragData.value.localState)
+                                      ? stampStateToStyles(stampDragData.value.localState).stampImg
                                       : {}
                                   ),
                                   width: "100%",
                                   zIndex: 3 + (stamps.hasValue === true ? stamps.value.length : 0),
+                                  cursor: "pointer",
                                   animationName:
                                     (stampDragData.hasValue === true && stampDragData.value.animation.hasValue === true)
                                       ? (
@@ -3581,8 +3613,8 @@ function EntryVisa(props: {
                                         + `_${Math.round(stampDragData.value.localState.offset.x)}_${Math.round(stampDragData.value.localState.offset.y)}_${stampDragData.value.localState.state.replace(" ", "")}`
                                         + `_${Math.round(stampDragData.value.animation.value.destLocalState.offset.x)}_${Math.round(stampDragData.value.animation.value.destLocalState.offset.y)}_${stampDragData.value.animation.value.destLocalState.state.replace(" ", "")}`
                                       }
-                                      from={stampStateToStyle(stampDragData.value.localState)}
-                                      to={stampStateToStyle(stampDragData.value.animation.value.destLocalState)}
+                                      from={stampStateToStyles(stampDragData.value.localState).stampImg}
+                                      to={stampStateToStyles(stampDragData.value.animation.value.destLocalState).stampImg}
                                     />
                                   )
                                   : undefined
