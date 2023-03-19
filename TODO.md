@@ -11,21 +11,19 @@
 - optionally add text message on deal
 - make deals with supplies products
 - pay fines with supplies products if out of money
-- (WIP) approval stamp officer tool
-  - Todo:
-    - (DONE) tool available in interrogation customsState
-    - clearer result visa
-      - incident report incident field instead of section title?
-      - entry visa text reveals like it's being written, and slows down on key words?
-      - special entry visa post-its?
-    - incident report legal contents wait until after stamp
-    - (DONE) stamp puts target around mouse, hovers (sorta-)far above
-    - (DONE) minimum delay from stamping->held?
-      - animation?
+- (DONE) entry visa
 - hammer officer tool
 - make deals at any time
 - traders and officer select a particular recycle pool to discard recycled and illegal-caught contracts
 - swap stage animations for clarity
+- clearer result visa
+  - incident report incident field instead of section title?
+  - entry visa text reveals like it's being written, and slows down on key words?
+  - special entry visa post-its?
+- stamp animation?
+- incident report legal contents wait until after stamp?
+
+
 
 
 ## Unprioritized
