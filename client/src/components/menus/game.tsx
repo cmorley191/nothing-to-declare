@@ -468,6 +468,22 @@ function FloatingDiv(props: {
   );
 }
 
+function splitIntoLines(text: string, maxLineLength: number) {
+  return (
+    text
+      .split("\n")
+      .map(l =>
+        l.split(" ")
+          .reduce((a: string[], b: string): string[] => {
+            const lastLine = a.at(-1);
+            if (lastLine === undefined || lastLine.length + b.length > maxLineLength) return a.concat([b]);
+            else return a.take(a.length - 1).concat([`${lastLine} ${b}`]);
+          }, [])
+      )
+      .reduce((a, b) => a.concat(b))
+  );
+}
+
 /**
  * (Element) Span that "types" its text one character at a time over an interval. 
  * Displays and animates according to ClaimMessageGameAnimationSteps in the game-wide GameAnimationSequence.
@@ -480,21 +496,7 @@ function ClaimMessageAnimatedRevealingText(props: {
 }) {
   const attrs = omitAttrs(['initialMessage', 'animation'], props);
 
-  const messageToMessageLines = (message: Optional<string>) => {
-    return (
-      optValueOr(message, "")
-        .split("\n")
-        .map(l =>
-          l.split(" ")
-            .reduce((a: string[], b: string): string[] => {
-              const lastLine = a.at(-1);
-              if (lastLine === undefined || lastLine.length + b.length > 70) return a.concat([b]);
-              else return a.take(a.length - 1).concat([`${lastLine} ${b}`]);
-            }, [])
-        )
-        .reduce((a, b) => a.concat(b))
-    );
-  }
+  const messageToMessageLines = (message: Optional<string>) => splitIntoLines(optValueOr(message, ""), 70);
 
   const { iGameAnimationStep, preAnimationStepState, postAnimationStepState } = (
     useGameAnimationStates<{
@@ -3519,183 +3521,177 @@ function EntryVisa(props: {
                     backgroundRepeat: "no-repeat",
                     zIndex: -4,
                   }}>
-                  <div style={{ opacity: 0 }}>
-                    <div>~</div>
-                    <div>~</div>
-                  </div>
-                  {
-                    props.buildVisaBodyEle({
-                      paymentsData: allPaymentsData,
-                      buildVisaTextEle({ visaText, includesHeader }) {
-                        return (
-                          <div>
-                            {
-                              visaText
-                                .split("\n")
-                                .map((l, i) =>
-                                  l.trim() == ""
-                                    ? (<div style={{ opacity: 0 }}>~</div>)
-                                    : (
-                                      <div style={
-                                        (i == 0 && includesHeader)
-                                          ? {
-                                            fontSize: "130%",
-                                            fontWeight: "bold",
-                                          }
-                                          : {}
-                                      }>
-                                        {l}
-                                      </div>)
-                                )
-                            }
-                          </div>
-                        );
-                      },
-                    })
-                  }
-                  <div>
-                    <div style={{
-                      display: "inline-block",
-                      verticalAlign: "middle",
-                      marginRight: "30px"
-                    }}>
-                      Duty Officer:
-                    </div>
-                    <div style={{
-                      display: "inline-block",
-                      verticalAlign: "middle",
-                      fontSize: "200%",
-                      borderWidth: "2px",
-                      borderStyle: "dashed",
-                      borderRadius: "15px",
-                      borderColor: "black",
-                    }}>
-                      <div style={{ margin: "5px", }}>
-                        <div style={{
-                          opacity: 0,
-                        }}>
-                          {props.stampIcon}
-                        </div>
-                      </div>
-                      {
-                        (() => {
-                          const stamps = (
-                            (stampDragData.hasValue === true)
-                              ? opt(stampDragData.value.localState.stamps)
-                              : (props.stamps.length > 0)
-                                ? opt(props.stamps)
-                                : nullopt
-                          );
+                  <div style={{ margin: "70px" }}>
+                    {
+                      props.buildVisaBodyEle({
+                        paymentsData: allPaymentsData,
+                        buildVisaTextEle({ visaText, includesHeader }) {
                           return (
-                            <div style={{ position: "relative" }}>
+                            <div>
                               {
-                                (stamps.hasValue === true)
-                                  ? (
-                                    stamps.value.map((stamp, iStamp) => (
-                                      <div
-                                        key={`payment_area_stamp_${iStamp}`}
-                                        style={{
-                                          margin: "5px",
-                                          position: "absolute",
-                                          left: `${0 + stamp.x}px`,
-                                          bottom: `${0 - stamp.y}px`,
-                                          zIndex: iStamp,
-                                        }}
-                                      >
-                                        {props.stampIcon}
-                                      </div>
-                                    ))
+                                visaText
+                                  .split("\n")
+                                  .map((l, i) =>
+                                    l.trim() == ""
+                                      ? (<div style={{ opacity: 0 }}>~</div>)
+                                      : (
+                                        <div style={
+                                          (i == 0 && includesHeader)
+                                            ? {
+                                              fontSize: "130%",
+                                              fontWeight: "bold",
+                                            }
+                                            : {}
+                                        }>
+                                          {l}
+                                        </div>)
                                   )
-                                  : undefined
-                              }
-                              <div // stamper target
-                                draggable={false} // just prevents mouse events from being suppressed by drag events
-                                onMouseDown={(event) => { onStampMouseDownHandler(event.nativeEvent); }}
-                                style={{
-                                  margin: "5px",
-                                  position: "absolute",
-                                  ...(
-                                    (stampDragData.hasValue === true)
-                                      ? stampStateToStyles(stampDragData.value.localState).stampTarget
-                                      : {}
-                                  ),
-                                  zIndex: 4 + (stamps.hasValue === true ? stamps.value.length : 0),
-                                  cursor: "pointer",
-                                  opacity:
-                                    (
-                                      props.officerTools.controls.localControllable === true
-                                      && stampDragData.hasValue === true
-                                      && stampDragData.value.localState.state === "held"
-                                      && inStampZone(stampDragData.value.localState.offset)
-                                    )
-                                      ? 0.3 : 0,
-                                }}
-                              >
-                                {props.stampIcon}
-                              </div>
-                              <img // stamper img
-                                src={stampImgSrc}
-                                draggable={false} // just prevents mouse events from being suppressed by drag events
-                                onMouseDown={(event) => { onStampMouseDownHandler(event.nativeEvent); }}
-                                style={{
-                                  opacity: stampDragData.hasValue === true ? 1 : 0,
-                                  position: "absolute",
-                                  ...(
-                                    (stampDragData.hasValue === true && stampDragData.value.animation.hasValue === false)
-                                      ? stampStateToStyles(stampDragData.value.localState).stampImg
-                                      : {}
-                                  ),
-                                  width: "100%",
-                                  zIndex: 3 + (stamps.hasValue === true ? stamps.value.length : 0),
-                                  cursor: "pointer",
-                                  animationName:
-                                    (stampDragData.hasValue === true && stampDragData.value.animation.hasValue === true)
-                                      ? (
-                                        `payment_stamp_animation`
-                                        + `_${Math.round(stampDragData.value.localState.offset.x)}_${Math.round(stampDragData.value.localState.offset.y)}_${stampDragData.value.localState.state.replace(" ", "")}`
-                                        + `_${Math.round(stampDragData.value.animation.value.destLocalState.offset.x)}_${Math.round(stampDragData.value.animation.value.destLocalState.offset.y)}_${stampDragData.value.animation.value.destLocalState.state.replace(" ", "")}`
-                                      )
-                                      : undefined,
-                                  animationDuration: `${stampUpdateAnimationDurationMs}ms`,
-                                  animationIterationCount: 1,
-                                  animationTimingFunction: stampUpdateAnimationFunction,
-                                  animationFillMode: "both",
-                                  animationDirection: "normal",
-                                  animationDelay: `${Math.floor(
-                                    (stampDragData.hasValue == false || stampDragData.value.animation.hasValue == false)
-                                      ? 0
-                                      : (-Math.min( // negative delay starts animation in middle of animation
-                                        (currentRenderTimeMs - stampDragData.value.animation.value.animationStartTimeMs),
-                                        stampUpdateAnimationDurationMs
-                                      ))
-                                  )}ms`,
-                                }}
-                                onAnimationEnd={onStampAnimationComplete}
-                              />
-                              { // stamp animation Keyframes
-                                (stampDragData.hasValue == true && stampDragData.value.animation.hasValue == true)
-                                  ? (
-                                    <Keyframes
-                                      name={
-                                        `payment_stamp_animation`
-                                        + `_${Math.round(stampDragData.value.localState.offset.x)}_${Math.round(stampDragData.value.localState.offset.y)}_${stampDragData.value.localState.state.replace(" ", "")}`
-                                        + `_${Math.round(stampDragData.value.animation.value.destLocalState.offset.x)}_${Math.round(stampDragData.value.animation.value.destLocalState.offset.y)}_${stampDragData.value.animation.value.destLocalState.state.replace(" ", "")}`
-                                      }
-                                      from={stampStateToStyles(stampDragData.value.localState).stampImg}
-                                      to={stampStateToStyles(stampDragData.value.animation.value.destLocalState).stampImg}
-                                    />
-                                  )
-                                  : undefined
                               }
                             </div>
                           );
-                        })()
-                      }
+                        },
+                      })
+                    }
+                    <div>
+                      <div style={{
+                        display: "inline-block",
+                        verticalAlign: "middle",
+                        marginRight: "30px"
+                      }}>
+                        Duty Officer:
+                      </div>
+                      <div style={{
+                        display: "inline-block",
+                        verticalAlign: "middle",
+                        fontSize: "200%",
+                        borderWidth: "2px",
+                        borderStyle: "dashed",
+                        borderRadius: "15px",
+                        borderColor: "black",
+                      }}>
+                        <div style={{ margin: "5px", }}>
+                          <div style={{
+                            opacity: 0,
+                          }}>
+                            {props.stampIcon}
+                          </div>
+                        </div>
+                        {
+                          (() => {
+                            const stamps = (
+                              (stampDragData.hasValue === true)
+                                ? opt(stampDragData.value.localState.stamps)
+                                : (props.stamps.length > 0)
+                                  ? opt(props.stamps)
+                                  : nullopt
+                            );
+                            return (
+                              <div style={{ position: "relative" }}>
+                                {
+                                  (stamps.hasValue === true)
+                                    ? (
+                                      stamps.value.map((stamp, iStamp) => (
+                                        <div
+                                          key={`payment_area_stamp_${iStamp}`}
+                                          style={{
+                                            margin: "5px",
+                                            position: "absolute",
+                                            left: `${0 + stamp.x}px`,
+                                            bottom: `${0 - stamp.y}px`,
+                                            zIndex: iStamp,
+                                          }}
+                                        >
+                                          {props.stampIcon}
+                                        </div>
+                                      ))
+                                    )
+                                    : undefined
+                                }
+                                <div // stamper target
+                                  draggable={false} // just prevents mouse events from being suppressed by drag events
+                                  onMouseDown={(event) => { onStampMouseDownHandler(event.nativeEvent); }}
+                                  style={{
+                                    margin: "5px",
+                                    position: "absolute",
+                                    ...(
+                                      (stampDragData.hasValue === true)
+                                        ? stampStateToStyles(stampDragData.value.localState).stampTarget
+                                        : {}
+                                    ),
+                                    zIndex: 4 + (stamps.hasValue === true ? stamps.value.length : 0),
+                                    cursor: "pointer",
+                                    opacity:
+                                      (
+                                        props.officerTools.controls.localControllable === true
+                                        && stampDragData.hasValue === true
+                                        && stampDragData.value.localState.state === "held"
+                                        && inStampZone(stampDragData.value.localState.offset)
+                                      )
+                                        ? 0.3 : 0,
+                                  }}
+                                >
+                                  {props.stampIcon}
+                                </div>
+                                <img // stamper img
+                                  src={stampImgSrc}
+                                  draggable={false} // just prevents mouse events from being suppressed by drag events
+                                  onMouseDown={(event) => { onStampMouseDownHandler(event.nativeEvent); }}
+                                  style={{
+                                    opacity: stampDragData.hasValue === true ? 1 : 0,
+                                    position: "absolute",
+                                    ...(
+                                      (stampDragData.hasValue === true && stampDragData.value.animation.hasValue === false)
+                                        ? stampStateToStyles(stampDragData.value.localState).stampImg
+                                        : {}
+                                    ),
+                                    width: "100%",
+                                    zIndex: 3 + (stamps.hasValue === true ? stamps.value.length : 0),
+                                    cursor: "pointer",
+                                    animationName:
+                                      (stampDragData.hasValue === true && stampDragData.value.animation.hasValue === true)
+                                        ? (
+                                          `payment_stamp_animation`
+                                          + `_${Math.round(stampDragData.value.localState.offset.x)}_${Math.round(stampDragData.value.localState.offset.y)}_${stampDragData.value.localState.state.replace(" ", "")}`
+                                          + `_${Math.round(stampDragData.value.animation.value.destLocalState.offset.x)}_${Math.round(stampDragData.value.animation.value.destLocalState.offset.y)}_${stampDragData.value.animation.value.destLocalState.state.replace(" ", "")}`
+                                        )
+                                        : undefined,
+                                    animationDuration: `${stampUpdateAnimationDurationMs}ms`,
+                                    animationIterationCount: 1,
+                                    animationTimingFunction: stampUpdateAnimationFunction,
+                                    animationFillMode: "both",
+                                    animationDirection: "normal",
+                                    animationDelay: `${Math.floor(
+                                      (stampDragData.hasValue == false || stampDragData.value.animation.hasValue == false)
+                                        ? 0
+                                        : (-Math.min( // negative delay starts animation in middle of animation
+                                          (currentRenderTimeMs - stampDragData.value.animation.value.animationStartTimeMs),
+                                          stampUpdateAnimationDurationMs
+                                        ))
+                                    )}ms`,
+                                  }}
+                                  onAnimationEnd={onStampAnimationComplete}
+                                />
+                                { // stamp animation Keyframes
+                                  (stampDragData.hasValue == true && stampDragData.value.animation.hasValue == true)
+                                    ? (
+                                      <Keyframes
+                                        name={
+                                          `payment_stamp_animation`
+                                          + `_${Math.round(stampDragData.value.localState.offset.x)}_${Math.round(stampDragData.value.localState.offset.y)}_${stampDragData.value.localState.state.replace(" ", "")}`
+                                          + `_${Math.round(stampDragData.value.animation.value.destLocalState.offset.x)}_${Math.round(stampDragData.value.animation.value.destLocalState.offset.y)}_${stampDragData.value.animation.value.destLocalState.state.replace(" ", "")}`
+                                        }
+                                        from={stampStateToStyles(stampDragData.value.localState).stampImg}
+                                        to={stampStateToStyles(stampDragData.value.animation.value.destLocalState).stampImg}
+                                      />
+                                    )
+                                    : undefined
+                                }
+                              </div>
+                            );
+                          })()
+                        }
+                      </div>
                     </div>
-                  </div>
-                  <div style={{ opacity: 0 }}>
-                    <div>~</div>
-                    <div>~</div>
                   </div>
                 </div>
               </div>
@@ -3846,6 +3842,7 @@ export default function MenuGame(props: MenuGameProps) {
                     ? {
                       result: "ignored for deal",
                       deal: clientGameState.result.deal,
+                      dealProposedByOfficer: clientGameState.result.dealProposedByOfficer,
                       resultState: clientGameState.result.resultState,
                     }
                     : (clientGameState.result.result == "searched")
@@ -4738,9 +4735,17 @@ export default function MenuGame(props: MenuGameProps) {
                     (event.data.action.action == "accept deal")
                       ? {
                         result: "ignored for deal",
-                        deal: (serverGameState.proposedDeal.hasValue == false)// TODO fix, this is proven false
-                          ? handleUnexpectedState() as IgnoreDeal
-                          : serverGameState.proposedDeal.value,
+                        ...(
+                          (serverGameState.proposedDeal.hasValue === false) // TODO fix, this is proven false
+                            ? handleUnexpectedState() as {
+                              deal: IgnoreDeal,
+                              dealProposedByOfficer: boolean,
+                            }
+                            : {
+                              deal: serverGameState.proposedDeal.value,
+                              dealProposedByOfficer: !serverGameState.proposedDeal.value.waitingOnOfficer,
+                            }
+                        ),
                         resultState: { resultState: "paying" },
                       }
                       : (event.data.action.action == "search cart")
@@ -5966,59 +5971,82 @@ export default function MenuGame(props: MenuGameProps) {
                           }
                         >
                           <Section>
-                            <Section
-                              title={clientGameState.localActiveTrader ? "You give:" : `Trader ${props.clients.get(iPlayerActiveTrader).name} gives:`}
-                              style={{ display: "inline-block" }}
-                            >
-                              {givingList({ givingIsOfficer: false })}
-                            </Section>
-                            <Section
-                              title={clientGameState.localOfficer ? "You give:" : `Officer ${props.clients.get(iPlayerOfficer).name} gives:`}
-                              style={{ display: "inline-block" }}
-                            >
-                              {givingList({ givingIsOfficer: true })}
-                            </Section>
+                            <div>
+                              <Section
+                                title={clientGameState.localActiveTrader ? "You give:" : `Trader ${props.clients.get(iPlayerActiveTrader).name} gives:`}
+                                style={{ display: "inline-block" }}
+                              >
+                                {givingList({ givingIsOfficer: false })}
+                              </Section>
+                              <Section
+                                title={clientGameState.localOfficer ? "You give:" : `Officer ${props.clients.get(iPlayerOfficer).name} gives:`}
+                                style={{ display: "inline-block" }}
+                              >
+                                {givingList({ givingIsOfficer: true })}
+                              </Section>
+                            </div>
+                            {
+                              (clientGameState.proposedDeal.value.message.hasValue === true)
+                                ? (
+                                  <Section>
+                                    <ClaimMessageAnimatedRevealingText
+                                      usekey={"menu_game_center_proposal_message"}
+                                      initialMessage={clientGameState.proposedDeal.value.message.value}
+                                      animation={nullopt}
+                                    />
+                                  </Section>
+                                )
+                                : undefined
+                            }
+
                           </Section>
+
                           { // buttons
                             (waitingOnLocal)
                               ? (
                                 <div>
-                                  <button
-                                    onClick={() => {
-                                      clientSendClientEventToServer({
-                                        type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
-                                        data: {
-                                          sourceClientId: props.localInfo.clientId,
-                                          action: {
-                                            action: "reject deal"
+                                  <br />
+                                  <div>
+                                    <button
+                                      onClick={() => {
+                                        clientSendClientEventToServer({
+                                          type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
+                                          data: {
+                                            sourceClientId: props.localInfo.clientId,
+                                            action: {
+                                              action: "reject deal"
+                                            }
                                           }
-                                        }
-                                      })
-                                    }}
-                                  >
-                                    Reject Deal
-                                  </button>
-                                  <button
-                                    onClick={() => {
-                                      clientSendClientEventToServer({
-                                        type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
-                                        data: {
-                                          sourceClientId: props.localInfo.clientId,
-                                          action: {
-                                            action: "accept deal"
+                                        })
+                                      }}
+                                    >
+                                      Reject Deal
+                                    </button>
+                                    <button
+                                      onClick={() => {
+                                        clientSendClientEventToServer({
+                                          type: NetworkTypes.ClientEventType.CUSTOMS_ACTION,
+                                          data: {
+                                            sourceClientId: props.localInfo.clientId,
+                                            action: {
+                                              action: "accept deal"
+                                            }
                                           }
-                                        }
-                                      })
-                                    }}
-                                  >
-                                    Accept Deal
-                                  </button>
+                                        })
+                                      }}
+                                    >
+                                      Accept Deal
+                                    </button>
+                                  </div>
                                 </div>
                               )
                               : (localInvolved)
                                 ? (
                                   <div>
-                                    Waiting for other player to respond<AnimatedEllipses />
+                                    <br />
+                                    <div>
+                                      Waiting for other player to respond<AnimatedEllipses />
+                                    </div>
                                   </div>
                                 )
                                 : undefined
@@ -6606,6 +6634,46 @@ export default function MenuGame(props: MenuGameProps) {
                                       }
                                     })()
                                   }
+                                  {
+                                    (clientGameState.result.result === "ignored for deal" && clientGameState.result.deal.message.hasValue === true)
+                                      ? (
+                                        <div>
+                                          {args.buildVisaTextEle({
+                                            includesHeader: false,
+                                            visaText:
+                                              `and, as stipulated by ${props.clients.get(clientGameState.result.dealProposedByOfficer ? iPlayerOfficer : iPlayerActiveTrader).name}:
+                                              ${splitIntoLines(
+                                                clientGameState.result.deal.message.value,
+                                                (() => {
+                                                  const headerLines = 15; // N
+                                                  const headerCharsPerLine = 40; // M
+                                                  const messageLength = clientGameState.result.deal.message.value.length; // C
+                                                  /*
+                                                   * The below is this equation (which models the entry visa text geometry), solved for charsPerLine:
+                                                   * (headerLines + (messageLength / charsPerLine)) * (headerCharsPerLine / headerLines) = charsPerLine
+                                                   */
+                                                  return Math.max(40, (
+                                                    (headerCharsPerLine / 2)
+                                                    + (
+                                                      (
+                                                        Math.sqrt(headerCharsPerLine)
+                                                        * Math.sqrt(
+                                                          (4 * messageLength)
+                                                          + (headerCharsPerLine * headerLines)
+                                                        )
+                                                      )
+                                                      / (2 * Math.sqrt(headerLines))
+                                                    )
+                                                  ));
+
+                                                })()
+                                              ).join("\n")}`
+                                          })}
+                                          <br />
+                                        </div>
+                                      )
+                                      : undefined
+                                  }
                                 </div>
                               )
                             }}
@@ -6718,7 +6786,6 @@ export default function MenuGame(props: MenuGameProps) {
                     })}
                     value={clientGameState.claimMessage}
                     placeholder="Write an additional message for the customs officer..."
-                    id="menu_connect_input_address" // unused - just a unique value to facilitate autofill
                   />
                 </Section>
               )
@@ -6945,24 +7012,40 @@ export default function MenuGame(props: MenuGameProps) {
                           return (
                             <div>
                               <Section>
-                                <Section
-                                  title={`Trader ${props.clients.get(iPlayerActiveTrader).name} Gives:`}
-                                  style={{ display: "inline-block" }}
-                                >
-                                  <GiveInterface
-                                    giverIsOfficer={false}
-                                    giverSupplies={currentTraderSupplies.get(iPlayerOfficer)}
-                                  />
-                                </Section>
-                                <Section
-                                  title={`Officer ${props.clients.get(iPlayerOfficer).name} Gives:`}
-                                  style={{ display: "inline-block" }}
-                                >
-                                  <GiveInterface
-                                    giverIsOfficer={true}
-                                    giverSupplies={currentTraderSupplies.get(iPlayerActiveTrader)}
-                                  />
-                                </Section>
+                                <div>
+                                  <Section
+                                    title={`Trader ${props.clients.get(iPlayerActiveTrader).name} Gives:`}
+                                    style={{ display: "inline-block" }}
+                                  >
+                                    <GiveInterface
+                                      giverIsOfficer={false}
+                                      giverSupplies={currentTraderSupplies.get(iPlayerOfficer)}
+                                    />
+                                  </Section>
+                                  <Section
+                                    title={`Officer ${props.clients.get(iPlayerOfficer).name} Gives:`}
+                                    style={{ display: "inline-block" }}
+                                  >
+                                    <GiveInterface
+                                      giverIsOfficer={true}
+                                      giverSupplies={currentTraderSupplies.get(iPlayerActiveTrader)}
+                                    />
+                                  </Section>
+                                </div>
+                                <textarea
+                                  rows={3}
+                                  cols={30}
+                                  onChange={e => setWipDeal(opt({
+                                    ...wipDeal.value,
+                                    message:
+                                      (e.target.value.trim() === "")
+                                        ? nullopt
+                                        : opt(e.target.value.substring(0, 1000))
+                                  }))
+                                  }
+                                  value={optValueOr(wipDeal.value.message, "")}
+                                  placeholder="Include an additional message..."
+                                />
                               </Section>
                               <div id={`menu_game_working_prep_deal_prep_deal_buttons`}>
                                 <button onClick={() => { setWipDeal(nullopt); }} >

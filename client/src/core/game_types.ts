@@ -465,6 +465,7 @@ export type ServerGameState =
           | {
             result: "ignored for deal",
             deal: IgnoreDeal,
+            dealProposedByOfficer: boolean,
             resultState: (
               | { resultState: "paying" | "confirming" }
               | { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] }
@@ -508,6 +509,7 @@ export type SerializableServerGameState =
           | {
             result: "ignored for deal",
             deal: IgnoreDeal,
+            dealProposedByOfficer: boolean,
             resultState: (
               | { resultState: "paying" | "confirming" }
               | { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] }
@@ -623,6 +625,7 @@ export type ClientGameState = (
             | {
               result: "ignored for deal",
               deal: IgnoreDeal,
+              dealProposedByOfficer: boolean,
               resultState: (
                 | { resultState: "paying" | "confirming" }
                 | { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] }

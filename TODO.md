@@ -8,7 +8,7 @@
   - strategic: swap sequentially, taking and recycling contracts via recycle pool. then pack simultaneously (start packing as soon as local swap complete)
 - chat window with game log
   - emote wheel
-- optionally add text message on deal
+- (DONE) optionally add text message on deal
 - make deals with supplies products
 - pay fines with supplies products if out of money
 - (DONE) entry visa
