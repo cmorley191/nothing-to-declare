@@ -1980,18 +1980,18 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
   getMouseDownState: (args: {
     eventTimeMs: number,
     previousState: TLocalState,
-    mousePosition: { x: number, y: number },
+    event: MouseEvent,
   }) => { state: TLocalState, animateTransition: "always" | "if existing" | "never", sendUpdateNow: boolean },
   getMouseUpState: (args: {
     eventTimeMs: number,
     previousState: TLocalState,
-    mousePosition: { x: number, y: number },
+    event: MouseEvent,
   }) => { state: TLocalState, animateTransition: "always" | "if existing" | "never", sendUpdateNow: boolean },
   getMouseMoveState: (args: {
     eventTimeMs: number,
     previousState: TLocalState,
-    mousePosition: { x: number, y: number },
-    mouseDownPosition: Optional<{ x: number, y: number }>,
+    event: MouseEvent,
+    clientMouseDownPosition: Optional<{ x: number, y: number }>,
   }) => { state: TLocalState, animateTransition: "always" | "if existing" | "never", sendUpdateNow: boolean },
   animationFunction: "linear",
   getInterruptedAnimationState: (args: { eventTime: number, animationProgress: number, startState: TLocalState, endState: TLocalState }) => TLocalState,
@@ -2143,7 +2143,7 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
         )({
           eventTimeMs,
           previousState: currentLocalState,
-          mousePosition: { x: funcArgs.event.clientX, y: funcArgs.event.clientY },
+          event: funcArgs.event,
         });
       },
     });
@@ -2235,8 +2235,8 @@ function useNetworkedOfficerToolState<TLocalState>(args: {
             return args.getMouseMoveState({
               eventTimeMs,
               previousState: currentLocalState,
-              mousePosition: { x: event.clientX, y: event.clientY },
-              mouseDownPosition: (localData.value.mouse.down === true) ? opt(localData.value.mouse.startPosition) : nullopt,
+              event,
+              clientMouseDownPosition: (localData.value.mouse.down === true) ? opt(localData.value.mouse.startPosition) : nullopt,
             });
           },
         });
@@ -2369,12 +2369,12 @@ function AnimatedCart(props: {
           // translates mouse drag pixels [0,400] to crowbar drag progress [0,1] using a log function, 
           // i.e. mouse drag provides more progress at the starting range (e.g. [0,100]) than the ending
           // See on wolfram alpha: "log2(1 + (x/10)) / log2(40) from x = -20 to x = 400"
-          if (args.mouseDownPosition.hasValue === false) {
+          if (args.clientMouseDownPosition.hasValue === false) {
             return { state: { ...args.previousState, crowbar: { useProgress: 0 } }, animateTransition: "never", sendUpdateNow: false, };
           } else {
             const state = (
               Math.min(1, Math.max(0,
-                Math.log2(1 + ((args.mousePosition.y - args.mouseDownPosition.value.y) / 10))
+                Math.log2(1 + ((args.event.clientY - args.clientMouseDownPosition.value.y) / 10))
                 / Math.log2(crowbarDragDistanceRequired / 10)
               ))
             );
@@ -3204,7 +3204,7 @@ function EntryVisa(props: {
             )
             & {
               pickupInfo: {
-                mousePosition: { x: number, y: number },
+                clientMousePosition: { x: number, y: number },
                 offset: { x: number, y: number },
               },
             }
@@ -3230,7 +3230,7 @@ function EntryVisa(props: {
                           : { state: networkState.value.stamp.value.state }
                       ),
                       pickupInfo: {
-                        mousePosition: { x: 0, y: 0 },
+                        clientMousePosition: { x: 0, y: 0 },
                         offset: { x: 0, y: 0 }
                       }
                     }
@@ -3279,13 +3279,22 @@ function EntryVisa(props: {
 
         getMouseDownState(args) {
           if (args.previousState.state === "not held") {
+            const eventTargetSize =
+              (args.event.target instanceof Element)
+                ? { width: args.event.target.clientWidth, height: args.event.target.clientHeight }
+                : { width: 0, height: 0 }; // should never happen
+            const offset = {
+              x: args.previousState.offset.x + args.event.offsetX - eventTargetSize.width * 0.5,
+              y: args.previousState.offset.y + args.event.offsetY - eventTargetSize.height * 0.85,
+            };
             return {
               state: {
                 ...args.previousState,
                 state: "held",
+                offset,
                 pickupInfo: {
-                  mousePosition: args.mousePosition,
-                  offset: args.previousState.offset,
+                  clientMousePosition: { x: args.event.clientX, y: args.event.clientY },
+                  offset,
                 }
               },
               animateTransition: "never",
@@ -3303,8 +3312,8 @@ function EntryVisa(props: {
             };
           } else { // "held"
             const newOffset = {
-              x: args.previousState.pickupInfo.offset.x + (args.mousePosition.x - args.previousState.pickupInfo.mousePosition.x),
-              y: args.previousState.pickupInfo.offset.y + (args.mousePosition.y - args.previousState.pickupInfo.mousePosition.y),
+              x: args.previousState.pickupInfo.offset.x + (args.event.clientX - args.previousState.pickupInfo.clientMousePosition.x),
+              y: args.previousState.pickupInfo.offset.y + (args.event.clientY - args.previousState.pickupInfo.clientMousePosition.y),
             };
             if (inStampZone(newOffset)) {
               return {
@@ -3334,7 +3343,7 @@ function EntryVisa(props: {
           }
         },
 
-        getMouseUpState({ eventTimeMs, previousState, mousePosition }) {
+        getMouseUpState({ eventTimeMs, previousState, event }) {
           if (previousState.state === "held") {
             // mouse up happened after stamp has just been picked up
             return { state: previousState, animateTransition: "never", sendUpdateNow: false };
@@ -3352,8 +3361,8 @@ function EntryVisa(props: {
           } else {
             // mouse up to lift from stamp
             const newOffset = {
-              x: previousState.pickupInfo.offset.x + (mousePosition.x - previousState.pickupInfo.mousePosition.x),
-              y: previousState.pickupInfo.offset.y + (mousePosition.y - previousState.pickupInfo.mousePosition.y),
+              x: previousState.pickupInfo.offset.x + (event.clientX - previousState.pickupInfo.clientMousePosition.x),
+              y: previousState.pickupInfo.offset.y + (event.clientY - previousState.pickupInfo.clientMousePosition.y),
             };
             return {
               state:
@@ -3387,8 +3396,8 @@ function EntryVisa(props: {
             };
           } else {
             const newOffset = {
-              x: args.previousState.pickupInfo.offset.x + (args.mousePosition.x - args.previousState.pickupInfo.mousePosition.x),
-              y: args.previousState.pickupInfo.offset.y + (args.mousePosition.y - args.previousState.pickupInfo.mousePosition.y),
+              x: args.previousState.pickupInfo.offset.x + (args.event.clientX - args.previousState.pickupInfo.clientMousePosition.x),
+              y: args.previousState.pickupInfo.offset.y + (args.event.clientY - args.previousState.pickupInfo.clientMousePosition.y),
             };
             if (args.previousState.state === "stamping") {
               // mouse move happened in the middle of stamping
@@ -3479,7 +3488,7 @@ function EntryVisa(props: {
       | {
         state: "held" | "stamping",
         pickupInfo: {
-          mousePosition: { x: number, y: number },
+          clientMousePosition: { x: number, y: number },
           offset: { x: number, y: number },
         },
       }
