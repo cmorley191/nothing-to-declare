@@ -3618,8 +3618,8 @@ function EntryVisa(props: {
                                         ? stampStateToStyles(stampDragData.value.localState).stampTarget
                                         : {}
                                     ),
-                                    zIndex: 4 + (stamps.hasValue === true ? stamps.value.length : 0),
-                                    cursor: "pointer",
+                                    zIndex: 3 + (stamps.hasValue === true ? stamps.value.length : 0),
+                                    cursor: props.officerTools.controls.localControllable === true ? "pointer" : "auto",
                                     opacity:
                                       (
                                         props.officerTools.controls.localControllable === true
@@ -3645,8 +3645,8 @@ function EntryVisa(props: {
                                         : {}
                                     ),
                                     width: "100%",
-                                    zIndex: 3 + (stamps.hasValue === true ? stamps.value.length : 0),
-                                    cursor: "pointer",
+                                    zIndex: 4 + (stamps.hasValue === true ? stamps.value.length : 0),
+                                    cursor: props.officerTools.controls.localControllable === true ? "pointer" : "auto",
                                     animationName:
                                       (stampDragData.hasValue === true && stampDragData.value.animation.hasValue === true)
                                         ? (
@@ -5626,7 +5626,14 @@ export default function MenuGame(props: MenuGameProps) {
 
 
   return (
-    <div id="menu_game">
+    <div id="menu_game" style={{
+      WebkitTouchCallout: "none",
+      WebkitUserSelect: "none",
+      KhtmlUserSelect: "none",
+      MozUserSelect: "none",
+      msUserSelect: "none",
+      userSelect: "none",
+    }}>
       <Section id="menu_game_title">
         <div>
           Round {clientGameState.round + 1} of {props.settings.numRounds}: {(() => {
