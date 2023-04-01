@@ -164,6 +164,10 @@ export class ProductArray<T> {
   map<U>(transformer: (obj: T, index: ProductType) => U) {
     return new ProductArray(this.arr.map(transformer))
   }
+
+  zip<U>(other: ProductArray<U>) {
+    return new ProductArray(this.arr.takeZip(other.arr));
+  }
 }
 
 export type AwardType =
@@ -399,15 +403,27 @@ export type CartState =
   | { packed: false }
   | { packed: true, cart: ClaimedCart }
 
-export type IgnoreDeal = {
-  officerGives: {
-    money: number,
-  },
-  traderGives: {
-    money: number,
-  }
-  message: Optional<string>
+export type Payment = {
+  money: number,
+  suppliesProducts: ProductArray<number>,
+};
+export function paymentEmpty(payment: Payment) {
+  return payment.money == 0 && payment.suppliesProducts.arr.every(x => x == 0);
 }
+export type SerializablePayment = {
+  money: number,
+  suppliesProducts: number[],
+};
+export type IgnoreDeal = {
+  officerGives: Payment,
+  traderGives: Payment,
+  message: Optional<string>,
+}
+export type SerializableIgnoreDeal = {
+  officerGives: SerializablePayment,
+  traderGives: SerializablePayment,
+  message: Optional<string>,
+};
 
 export type PersistentGameState = {
   communityPools: CommunityContractPools,
@@ -489,7 +505,7 @@ export type SerializableServerGameState =
       | {
         customsState: "interrogating",
         iPlayerActiveTrader: number,
-        proposedDeal: Optional<IgnoreDeal & { waitingOnOfficer: boolean }>,
+        proposedDeal: Optional<SerializableIgnoreDeal & { waitingOnOfficer: boolean }>,
         crowbarSelected: boolean,
         entryVisaVisible: boolean,
       }
@@ -508,7 +524,7 @@ export type SerializableServerGameState =
           | { result: "ignored", resultState: { resultState: "continuing", entryVisaStamps: EntryVisaStamp[] } }
           | {
             result: "ignored for deal",
-            deal: IgnoreDeal,
+            deal: SerializableIgnoreDeal,
             dealProposedByOfficer: boolean,
             resultState: (
               | { resultState: "paying" | "confirming" }

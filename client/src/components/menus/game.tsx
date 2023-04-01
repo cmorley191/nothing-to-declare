@@ -2,7 +2,7 @@ import * as React from "react";
 
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
 import * as NetworkTypes from "../../core/network_types";
-import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings, officerIcon, contractIcon, crossOutIcon } from "../../core/game_types";
+import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings, officerIcon, contractIcon, crossOutIcon, Payment, paymentEmpty, SerializableIgnoreDeal } from "../../core/game_types";
 import { Optional, getRandomInt, nullopt, omitAttrs, opt, optAnd, optBind, optMap, optValueOr } from "../../core/util";
 
 import AnimatedEllipses from "../elements/animated_ellipses";
@@ -75,9 +75,7 @@ type PaymentGameAnimationStep = {
   iPlayerGiver: ValidPlayerIndex,
   iPlayerReceiver: ValidPlayerIndex,
   action: "reveal if not yet revealed" | "give" | "receive",
-  payment: {
-    money: number,
-  },
+  payment: Payment,
 }
 type ClaimMessageGameAnimationStep = {
   type: "claim message",
@@ -681,6 +679,7 @@ function TraderSuppliesTable(props: {
             supplies: {
               ...previousState.supplies,
               money: previousState.supplies.money + (step.action == "give" ? -step.payment.money : step.payment.money),
+              shopProductCounts: previousState.supplies.shopProductCounts.map((previousAmount, p) => previousAmount + (step.action == "give" ? -step.payment.suppliesProducts.get(p) : step.payment.suppliesProducts.get(p))),
             },
             iPlayerPaymentAreaOwner: opt(step.iPlayerGiver),
             onStateReached: opt(callAllOnCompletes),
@@ -901,56 +900,88 @@ function TraderSuppliesTable(props: {
       {...rows}
       {
         stepIPlayerPaymentAreaOwner.hasValue == true
-          ? Array(Math.abs(postAnimationStepState.supplies.money - preAnimationStepState.supplies.money)).fill(false)
-            .map((_false, i) => {
-              return (
-                <FloatingDiv
-                  usekey={`${props.usekey}_floating_div_money_${i}_rerender_${renderCount.current}`}
-                  animationSteps={
-                    (
-                      ((): FloatingDivAnimationStep[] => {
-                        const paymentAreaMoneyIconEleId = `menu_game_payment_player_${iPlayerToNum(stepIPlayerPaymentAreaOwner.value)}_item_money`;
-                        const suppliesMoneyIconEleId = `${props.usekey}_item_icon_money`;
-                        const [sourceMoneyIconEleId, destinationMoneyIconEleId] =
-                          (postAnimationStepState.supplies.money > preAnimationStepState.supplies.money)
-                            ? [paymentAreaMoneyIconEleId, suppliesMoneyIconEleId]
-                            : [suppliesMoneyIconEleId, paymentAreaMoneyIconEleId];
-                        return [
+          ? (() => {
+            const paymentSupplies = (
+              [
+                {
+                  icon: moneyIcon,
+                  amountExitingSuppliesArea: preAnimationStepState.supplies.money - postAnimationStepState.supplies.money,
+                  id: -1,
+                  suppliesAreaIconEleId: `${props.usekey}_item_icon_money`,
+                }
+              ]
+                .concat(
+                  preAnimationStepState.supplies.shopProductCounts
+                    .zip(postAnimationStepState.supplies.shopProductCounts)
+                    .map(([preAmount, postAmount], p) => ({
+                      icon: productInfos.get(p).icon,
+                      amountExitingSuppliesArea: preAmount - postAmount,
+                      id: p,
+                      suppliesAreaIconEleId: `${props.usekey}_item_icon_${p}`,
+                    }))
+                    .arr
+                )
+                .filter(s => s.amountExitingSuppliesArea != 0)
+                .map(s => Array(Math.abs(s.amountExitingSuppliesArea)).fill(false).map(() => ({
+                  icon: s.icon,
+                  id: s.id,
+                  suppliesAreaIconEleId: s.suppliesAreaIconEleId,
+                  direction: s.amountExitingSuppliesArea > 0 ? "exiting supplies area" : "entering supplies area"
+                })))
+                .reduce((a, b) => a.concat(b), [])
+            );
+            return (
+              paymentSupplies
+                .map((s, i) => {
+                  return (
+                    <FloatingDiv
+                      usekey={`${props.usekey}_floating_div_${s.id}_${i}_rerender_${renderCount.current}`}
+                      animationSteps={
+                        (
+                          ((): FloatingDivAnimationStep[] => {
+                            const paymentAreaIconEleId = `menu_game_payment_player_${iPlayerToNum(stepIPlayerPaymentAreaOwner.value)}_item_icon_${s.id}`;
+                            const [sourceIconEleId, destinationIconEleId] =
+                              (s.direction === "entering supplies area")
+                                ? [paymentAreaIconEleId, s.suppliesAreaIconEleId]
+                                : [s.suppliesAreaIconEleId, paymentAreaIconEleId];
+                            return [
+                              {
+                                action: "teleport to",
+                                targetPosition: {
+                                  relativeElementId: sourceIconEleId
+                                }
+                              },
+                              {
+                                action: "wait",
+                                delayMs: 300 * i
+                              },
+                              {
+                                action: "float to",
+                                targetPosition: {
+                                  relativeElementId: destinationIconEleId
+                                },
+                                animationDuration: "700ms"
+                              }
+                            ];
+                          })()
+                        ).concat([
                           {
-                            action: "teleport to",
-                            targetPosition: {
-                              relativeElementId: sourceMoneyIconEleId
+                            action: "notify",
+                            callback: () => {
+                              if (postAnimationStepState.onStateReached.hasValue == true && i == paymentSupplies.length - 1) {
+                                postAnimationStepState.onStateReached.value();
+                              }
                             }
-                          },
-                          {
-                            action: "wait",
-                            delayMs: 300 * i
-                          },
-                          {
-                            action: "float to",
-                            targetPosition: {
-                              relativeElementId: destinationMoneyIconEleId
-                            },
-                            animationDuration: "700ms"
                           }
-                        ];
-                      })()
-                    ).concat([
-                      {
-                        action: "notify",
-                        callback: () => {
-                          if (postAnimationStepState.onStateReached.hasValue == true && i == Math.abs(postAnimationStepState.supplies.money - preAnimationStepState.supplies.money) - 1) {
-                            postAnimationStepState.onStateReached.value();
-                          }
-                        }
+                        ])
                       }
-                    ])
-                  }
-                >
-                  <span>{moneyIcon}</span>
-                </FloatingDiv>
-              );
-            })
+                    >
+                      <span>{s.icon}</span>
+                    </FloatingDiv>
+                  );
+                })
+            );
+          })()
           : undefined
       }
     </div>
@@ -3013,9 +3044,7 @@ function EntryVisa(props: {
       givingListEle: React.ReactNode,
       payment: {
         iPlayerGiver: ValidPlayerIndex,
-        payment: {
-          money: number,
-        },
+        payment: Payment,
       },
       preAnimationStepPaymentState: "revealed" | "collected" | "distributed" | "not yet revealed",
       postAnimationStepPaymentState: "revealed" | "collected" | "distributed" | "not yet revealed",
@@ -3028,8 +3057,8 @@ function EntryVisa(props: {
   stamps: NetworkTypes.EntryVisaStamp[],
 }) {
   const paymentsMatch = (
-    a: { iPlayerGiver: ValidPlayerIndex, payment: { money: number } },
-    b: { iPlayerGiver: ValidPlayerIndex, payment: { money: number } },
+    a: { iPlayerGiver: ValidPlayerIndex, payment: Payment },
+    b: { iPlayerGiver: ValidPlayerIndex, payment: Payment },
   ) => iPlayerToNum(a.iPlayerGiver) === iPlayerToNum(b.iPlayerGiver);
 
   const { iGameAnimationStep, gameAnimationStep, preAnimationStepState, postAnimationStepState, postAnimationSequenceState } = (
@@ -3037,7 +3066,7 @@ function EntryVisa(props: {
       revealedPaymentsStates: {
         payment: {
           iPlayerGiver: ValidPlayerIndex,
-          payment: { money: number },
+          payment: Payment,
         }
         state: "revealed" | "collected" | "distributed",
       }[],
@@ -3143,12 +3172,22 @@ function EntryVisa(props: {
               [
                 {
                   icon: moneyIcon,
+                  id: -1,
                   amount: paymentData.payment.payment.money
                 }
               ]
+                .concat(
+                  paymentData.payment.payment.suppliesProducts
+                    .map((amount, p) => ({
+                      icon: productInfos.get(p).icon,
+                      id: p,
+                      amount,
+                    }))
+                    .arr
+                )
                 .filter(s => s.amount > 0)
                 .map(s => (
-                  <span key={`menu_game_payment_player_${iPlayerToNum(paymentData.payment.iPlayerGiver)}_icon_${s.icon}`}>
+                  <span key={`menu_game_payment_player_${iPlayerToNum(paymentData.payment.iPlayerGiver)}_item_${s.id}`}>
                     {s.amount}{" "}
                     <span
                       style={{
@@ -3157,7 +3196,9 @@ function EntryVisa(props: {
                             ? 1
                             : 0.3
                       }}
-                      id={`menu_game_payment_player_${iPlayerToNum(paymentData.payment.iPlayerGiver)}_item_money`}>{s.icon}
+                      id={`menu_game_payment_player_${iPlayerToNum(paymentData.payment.iPlayerGiver)}_item_icon_${s.id}`}
+                    >
+                      {s.icon}
                     </span>
                   </span>
                 ))
@@ -4209,7 +4250,34 @@ export default function MenuGame(props: MenuGameProps) {
                         (clientGameState.state == "Customs" && clientGameState.customsState == "interrogating")
                           ? clientGameState.interrogatingState
                           : "cart entering",
-                      proposedDeal: event.data.state.proposedDeal,
+                      proposedDeal: optMap(event.data.state.proposedDeal, (proposedDealVal) => ({
+                        officerGives: {
+                          money: proposedDealVal.officerGives.money,
+                          suppliesProducts: (() => {
+                            const arr = ProductArray.tryNewArray(proposedDealVal.officerGives.suppliesProducts);
+                            if (arr.hasValue === false) {
+                              // TODO move this up to the other checks
+                              console.log(`Received bad STATE_UPDATE: ${JSON.stringify(event)}`);
+                              return productInfos.map(() => 0);
+                            }
+                            return arr.value;
+                          })(),
+                        },
+                        traderGives: {
+                          money: proposedDealVal.traderGives.money,
+                          suppliesProducts: (() => {
+                            const arr = ProductArray.tryNewArray(proposedDealVal.traderGives.suppliesProducts);
+                            if (arr.hasValue === false) {
+                              // TODO move this up to the other checks
+                              console.log(`Received bad STATE_UPDATE: ${JSON.stringify(event)}`);
+                              return productInfos.map(() => 0);
+                            }
+                            return arr.value;
+                          })(),
+                        },
+                        message: proposedDealVal.message,
+                        waitingOnOfficer: proposedDealVal.waitingOnOfficer,
+                      })),
                       crowbarSelected: event.data.state.crowbarSelected,
                       entryVisaVisible: event.data.state.entryVisaVisible,
                       ...(
@@ -4253,7 +4321,42 @@ export default function MenuGame(props: MenuGameProps) {
                         }
                       ),
                       wipTraderSupplies: eventTraderSupplies.value.shallowCopy(),
-                      result: event.data.state.result,
+                      result: (
+                        (event.data.state.result.result === "ignored for deal")
+                          ? {
+                            result: "ignored for deal",
+                            deal: {
+                              officerGives: {
+                                money: event.data.state.result.deal.officerGives.money,
+                                suppliesProducts: (() => {
+                                  const arr = ProductArray.tryNewArray(event.data.state.result.deal.officerGives.suppliesProducts);
+                                  if (arr.hasValue === false) {
+                                    // TODO move this up to the other checks
+                                    console.log(`Received bad STATE_UPDATE: ${JSON.stringify(event)}`);
+                                    return productInfos.map(() => 0);
+                                  }
+                                  return arr.value;
+                                })(),
+                              },
+                              traderGives: {
+                                money: event.data.state.result.deal.traderGives.money,
+                                suppliesProducts: (() => {
+                                  const arr = ProductArray.tryNewArray(event.data.state.result.deal.traderGives.suppliesProducts);
+                                  if (arr.hasValue === false) {
+                                    // TODO move this up to the other checks
+                                    console.log(`Received bad STATE_UPDATE: ${JSON.stringify(event)}`);
+                                    return productInfos.map(() => 0);
+                                  }
+                                  return arr.value;
+                                })(),
+                              },
+                              message: event.data.state.result.deal.message,
+                            },
+                            dealProposedByOfficer: event.data.state.result.dealProposedByOfficer,
+                            resultState: event.data.state.result.resultState,
+                          }
+                          : event.data.state.result
+                      ),
                     };
                 }
               })()
@@ -4659,7 +4762,7 @@ export default function MenuGame(props: MenuGameProps) {
                 proposedDeal: nullopt,
                 crowbarSelected: false,
                 entryVisaVisible: false,
-              });
+              } satisfies SerializableServerGameState);
             } else if (serverGameState.customsState == "interrogating") {
               if (event.data.action.action == "resume interrogation"
                 || event.data.action.action == "resolve confirmation ready"
@@ -4678,7 +4781,7 @@ export default function MenuGame(props: MenuGameProps) {
                   iPlayerOfficer: serverGameState.iPlayerOfficer.value,
                   cartStates: serverGameState.cartStates.arr,
                   customsState: "ready"
-                });
+                } satisfies SerializableServerGameState);
               } else if (event.data.action.action == "officer tool update") {
                 // should've been handled above
                 handleUnexpectedState();
@@ -4694,7 +4797,7 @@ export default function MenuGame(props: MenuGameProps) {
                     ...event.data.action.deal,
                     waitingOnOfficer: iPlayerToNum(serverGameState.iPlayerOfficer) != iPlayerToNum(iPlayerEvent)
                   }),
-                });
+                } satisfies SerializableServerGameState);
               } else if (event.data.action.action == "reject deal") {
                 if (
                   serverGameState.proposedDeal.hasValue == false
@@ -4710,7 +4813,7 @@ export default function MenuGame(props: MenuGameProps) {
                     iPlayerActiveTrader: serverGameState.iPlayerActiveTrader.value,
                     cartStates: serverGameState.cartStates.arr,
                     proposedDeal: nullopt,
-                  });
+                  } satisfies SerializableServerGameState);
                 }
               } else if (event.data.action.action == "prepare tool") {
                 return opt({
@@ -4721,7 +4824,19 @@ export default function MenuGame(props: MenuGameProps) {
                   cartStates: serverGameState.cartStates.arr,
                   crowbarSelected: serverGameState.crowbarSelected || event.data.action.tool === "crowbar",
                   entryVisaVisible: serverGameState.entryVisaVisible || event.data.action.tool === "stamp",
-                });
+                  proposedDeal: optMap(serverGameState.proposedDeal, (proposedDealVal) => ({
+                    officerGives: {
+                      money: proposedDealVal.officerGives.money,
+                      suppliesProducts: proposedDealVal.officerGives.suppliesProducts.arr,
+                    },
+                    traderGives: {
+                      money: proposedDealVal.traderGives.money,
+                      suppliesProducts: proposedDealVal.traderGives.suppliesProducts.arr,
+                    },
+                    message: proposedDealVal.message,
+                    waitingOnOfficer: proposedDealVal.waitingOnOfficer,
+                  })),
+                } satisfies SerializableServerGameState);
               } else { // ignore cart, search cart, or accept deal
                 return opt({
                   state: "Customs",
@@ -4747,11 +4862,21 @@ export default function MenuGame(props: MenuGameProps) {
                         ...(
                           (serverGameState.proposedDeal.hasValue === false) // TODO fix, this is proven false
                             ? handleUnexpectedState() as {
-                              deal: IgnoreDeal,
+                              deal: SerializableIgnoreDeal,
                               dealProposedByOfficer: boolean,
                             }
                             : {
-                              deal: serverGameState.proposedDeal.value,
+                              deal: {
+                                officerGives: {
+                                  money: serverGameState.proposedDeal.value.officerGives.money,
+                                  suppliesProducts: serverGameState.proposedDeal.value.officerGives.suppliesProducts.arr,
+                                },
+                                traderGives: {
+                                  money: serverGameState.proposedDeal.value.traderGives.money,
+                                  suppliesProducts: serverGameState.proposedDeal.value.traderGives.suppliesProducts.arr,
+                                },
+                                message: serverGameState.proposedDeal.value.message,
+                              },
                               dealProposedByOfficer: !serverGameState.proposedDeal.value.waitingOnOfficer,
                             }
                         ),
@@ -4781,7 +4906,7 @@ export default function MenuGame(props: MenuGameProps) {
                         }
                         : { result: "ignored", resultState: { resultState: "continuing", entryVisaStamps: event.data.action.entryVisaStamps } }
                   )
-                })
+                } satisfies SerializableServerGameState)
               }
             } else { // "resolving"
               const suspectCartState = serverGameState.cartStates.get(serverGameState.iPlayerActiveTrader);
@@ -4818,7 +4943,7 @@ export default function MenuGame(props: MenuGameProps) {
                   customsState: "resolving",
                   iPlayerActiveTrader: serverGameState.iPlayerActiveTrader.value,
                   result: (
-                    (serverGameState.result.result !== "ignored")
+                    (serverGameState.result.result === "searched")
                       ? {
                         ...serverGameState.result,
                         resultState:
@@ -4826,9 +4951,29 @@ export default function MenuGame(props: MenuGameProps) {
                             ? { resultState: "confirming" }
                             : { resultState: "continuing", entryVisaStamps: event.data.action.entryVisaStamps },
                       }
-                      : serverGameState.result // TODO should be impossible by above if statement
+                      : (serverGameState.result.result === "ignored for deal")
+                        ? {
+                          result: "ignored for deal",
+                          deal: {
+                            officerGives: {
+                              money: serverGameState.result.deal.officerGives.money,
+                              suppliesProducts: serverGameState.result.deal.officerGives.suppliesProducts.arr,
+                            },
+                            traderGives: {
+                              money: serverGameState.result.deal.traderGives.money,
+                              suppliesProducts: serverGameState.result.deal.traderGives.suppliesProducts.arr,
+                            },
+                            message: serverGameState.result.deal.message,
+                          },
+                          dealProposedByOfficer: serverGameState.result.dealProposedByOfficer,
+                          resultState:
+                            (event.data.action.action === "resolve confirmation ready")
+                              ? { resultState: "confirming" }
+                              : { resultState: "continuing", entryVisaStamps: event.data.action.entryVisaStamps },
+                        }
+                        : serverGameState.result // TODO should be impossible by above if statement
                   ),
-                });
+                } satisfies SerializableServerGameState);
               } else { // "resolve completed"
                 const newPools: CommunityContractPools = {
                   generalPoolContractCounts: serverGameState.communityPools.generalPoolContractCounts.shallowCopy(),
@@ -4909,7 +5054,7 @@ export default function MenuGame(props: MenuGameProps) {
                     return opt({
                       state: "GameEnd",
                       finalTraderSupplies: newTraderSupplies.arr.map(s => ({ ...s, shopProductCounts: s.shopProductCounts.arr }))
-                    });
+                    } satisfies SerializableServerGameState);
                   } else {
                     return opt({
                       ...(
@@ -4923,7 +5068,7 @@ export default function MenuGame(props: MenuGameProps) {
                       counters: serverGameState.counters,
                       iPlayerOfficer: props.clients.incrementIndexModLength(serverGameState.iPlayerOfficer, 1).value,
                       cartStates: props.clients.map(() => { return { "packed": false as false }; }).arr,
-                    });
+                    } satisfies SerializableServerGameState);
                   }
                 } else {
                   const newCartStates = serverGameState.cartStates.shallowCopy();
@@ -4937,7 +5082,7 @@ export default function MenuGame(props: MenuGameProps) {
                     iPlayerOfficer: serverGameState.iPlayerOfficer.value,
                     cartStates: newCartStates.arr,
                     customsState: "ready"
-                  });
+                  } satisfies SerializableServerGameState);
                 }
               }
             }
@@ -5351,7 +5496,8 @@ export default function MenuGame(props: MenuGameProps) {
                           iPlayerGiver: (illegalProducts.length > 0) ? iPlayerActiveTrader : iPlayerOfficer,
                           iPlayerReceiver: (illegalProducts.length > 0) ? iPlayerOfficer : iPlayerActiveTrader,
                           payment: {
-                            money: (illegalProducts.length > 0 ? illegalProducts : legalProducts).map(p => getProductInfo(p).fine as number).reduce((a, b) => a + b, 0)
+                            money: (illegalProducts.length > 0 ? illegalProducts : legalProducts).map(p => getProductInfo(p).fine as number).reduce((a, b) => a + b, 0),
+                            suppliesProducts: productInfos.map(() => 0),
                           }
                         };
 
@@ -5423,28 +5569,24 @@ export default function MenuGame(props: MenuGameProps) {
                               ? [] as GameAnimationStep[]
                               : (
                                 (
-                                  (clientGameState.result.deal.traderGives.money == 0)
+                                  (paymentEmpty(clientGameState.result.deal.traderGives))
                                     ? []
                                     : [{
                                       type: "payment",
                                       action: "reveal if not yet revealed",
                                       iPlayerGiver: iPlayerActiveTrader,
                                       iPlayerReceiver: iPlayerOfficer,
-                                      payment: {
-                                        money: clientGameState.result.deal.traderGives.money
-                                      }
+                                      payment: clientGameState.result.deal.traderGives,
                                     } satisfies PaymentGameAnimationStep]
                                 ).concat(
-                                  (clientGameState.result.deal.officerGives.money == 0)
+                                  (paymentEmpty(clientGameState.result.deal.officerGives))
                                     ? []
                                     : [{
                                       type: "payment",
                                       action: "reveal if not yet revealed",
                                       iPlayerGiver: iPlayerOfficer,
                                       iPlayerReceiver: iPlayerActiveTrader,
-                                      payment: {
-                                        money: clientGameState.result.deal.officerGives.money,
-                                      }
+                                      payment: clientGameState.result.deal.officerGives,
                                     } satisfies PaymentGameAnimationStep]
                                 )
                                   .map((paymentRevealStep): GameAnimationStep[] => [
@@ -5951,21 +6093,33 @@ export default function MenuGame(props: MenuGameProps) {
                           {
                             (args.givingIsOfficer)
                               ? (<div>Won't search {clientGameState.localActiveTrader ? "your" : `${props.clients.get(iPlayerActiveTrader).name}'s`} cart</div>)
-                              : (((args.givingIsOfficer) ? proposedDeal.value.officerGives : proposedDeal.value.traderGives).money === 0)
+                              : (paymentEmpty((args.givingIsOfficer) ? proposedDeal.value.officerGives : proposedDeal.value.traderGives))
                                 ? (<span>Nothing</span>)
                                 : undefined
                           }
                           {
-                            [
-                              {
-                                icon: moneyIcon,
-                                amount: ((args.givingIsOfficer) ? proposedDeal.value.officerGives : proposedDeal.value.traderGives).money
-                              }
-                            ]
-                              .filter(s => s.amount > 0)
-                              .map(s => (
-                                <div>{s.amount} {s.icon}</div>
-                              ))
+                            (() => {
+                              const giverGives = ((args.givingIsOfficer) ? proposedDeal.value.officerGives : proposedDeal.value.traderGives);
+                              return [
+                                {
+                                  icon: moneyIcon,
+                                  amount: giverGives.money
+                                }
+                              ]
+                                .concat(
+                                  giverGives.suppliesProducts
+                                    .map((amount, p) => ({
+                                      icon: productInfos.get(p).icon,
+                                      amount,
+                                    }))
+                                    .arr
+                                )
+                                .filter(s => s.amount > 0)
+                                .map(s => (
+                                  <div>{s.amount} {s.icon}</div>
+                                ))
+                            })()
+
                           }
                         </div>
                       );
@@ -6837,10 +6991,12 @@ export default function MenuGame(props: MenuGameProps) {
                                 onClick={() => {
                                   setWipDeal(opt({
                                     officerGives: {
-                                      money: 0
+                                      money: 0,
+                                      suppliesProducts: productInfos.map(() => 0),
                                     },
                                     traderGives: {
-                                      money: 0
+                                      money: 0,
+                                      suppliesProducts: productInfos.map(() => 0),
                                     },
                                     message: nullopt
                                   }));
@@ -6919,9 +7075,49 @@ export default function MenuGame(props: MenuGameProps) {
                                         | { giveable: true, currentAmount: number, set: (newAmount: number) => void }
                                       }[]
                                     )
+                                      .concat(
+                                        productInfos
+                                          .zip(wipDeal.value.officerGives.suppliesProducts)
+                                          .zip(wipDeal.value.traderGives.suppliesProducts)
+                                          .zip(giveInterfaceProps.giverSupplies.shopProductCounts)
+                                          .map(([[[info, officerGiveCount], traderGiveCount], giverSuppliesCount]) => ({ info, officerGiveCount, traderGiveCount, giverSuppliesCount }))
+                                          .arr
+                                          .filter((p) => p.info.legal)
+                                          .map((p) => ({
+                                            ordering: 1 + (.001 * p.info.type),
+                                            icon: p.info.icon,
+                                            id: p.info.type,
+                                            maxGivingAmount: p.giverSuppliesCount,
+                                            officerGiving: {
+                                              giveable: true,
+                                              currentAmount: p.officerGiveCount,
+                                              set: (newAmount: number) => {
+                                                setWipDeal(opt({
+                                                  ...wipDeal.value,
+                                                  officerGives: {
+                                                    ...wipDeal.value.officerGives,
+                                                    suppliesProducts: wipDeal.value.officerGives.suppliesProducts.shallowCopy().set(p.info.type, newAmount)
+                                                  }
+                                                }))
+                                              }
+                                            },
+                                            traderGiving: {
+                                              giveable: true,
+                                              currentAmount: p.traderGiveCount,
+                                              set: (newAmount: number) => {
+                                                setWipDeal(opt({
+                                                  ...wipDeal.value,
+                                                  traderGives: {
+                                                    ...wipDeal.value.traderGives,
+                                                    suppliesProducts: wipDeal.value.traderGives.suppliesProducts.shallowCopy().set(p.info.type, newAmount)
+                                                  }
+                                                }))
+                                              }
+                                            },
+                                          }))
+                                      )
                                       .map(s => // map officer/trading to current/other
                                         (
-
                                           (giveInterfaceProps.giverIsOfficer)
                                             ? {
                                               ...s,
@@ -6957,15 +7153,19 @@ export default function MenuGame(props: MenuGameProps) {
                                         || (s.otherGiving.giveable == true && s.otherGiving.currentAmount > 0)
                                       )
                                   );
+                                  console.log("Someone giving: ");
+                                  console.log(JSON.stringify(someoneGivingSupplies));
+                                  console.log("Nobody giving: ");
+                                  console.log(JSON.stringify(nobodyGivingSupplies));
                                   const giveableSupplies = (
                                     nobodyGivingSupplies
                                       .sort((a, b) => a.ordering - b.ordering)
                                       .filterTransform((s) =>
-                                        (s.currentGiving.giveable == true)
+                                        (s.currentGiving.giveable == true || s.otherGiving.giveable == true)
                                           ? opt({
                                             id: s.id,
                                             icon: s.icon,
-                                            set: s.currentGiving.set
+                                            currentGiving: s.currentGiving,
                                           })
                                           : nullopt
                                       )
@@ -7002,11 +7202,16 @@ export default function MenuGame(props: MenuGameProps) {
                                       .concat(giveableSupplies.length == 0 ? [] : [(
                                         <div>
                                           <select
-                                            onChange={(e) => giveableSupplies.filter(s => s.id == parseInt(e.target.value))[0]?.set(1)}
+                                            onChange={(e) =>
+                                              (giveableSupplies
+                                                .filterTransform(s => s.id == parseInt(e.target.value) && s.currentGiving.giveable === true ? opt(s.currentGiving.set) : nullopt)
+                                              [0] ?? (() => { }))(1)
+                                            }
                                           >
                                             <option disabled selected value=""></option>
                                             {
                                               giveableSupplies
+                                                .filter(s => s.currentGiving.giveable)
                                                 .map(s => (
                                                   <option
                                                     key={`menu_game_working_prep_deal_giving_officer_${giveInterfaceProps.giverIsOfficer}_item_${s.id}`}
@@ -7035,7 +7240,7 @@ export default function MenuGame(props: MenuGameProps) {
                                   >
                                     <GiveInterface
                                       giverIsOfficer={false}
-                                      giverSupplies={currentTraderSupplies.get(iPlayerOfficer)}
+                                      giverSupplies={currentTraderSupplies.get(iPlayerActiveTrader)}
                                     />
                                   </Section>
                                   <Section
@@ -7044,7 +7249,7 @@ export default function MenuGame(props: MenuGameProps) {
                                   >
                                     <GiveInterface
                                       giverIsOfficer={true}
-                                      giverSupplies={currentTraderSupplies.get(iPlayerActiveTrader)}
+                                      giverSupplies={currentTraderSupplies.get(iPlayerOfficer)}
                                     />
                                   </Section>
                                 </div>
@@ -7094,7 +7299,17 @@ export default function MenuGame(props: MenuGameProps) {
                                 sourceClientId: props.localInfo.clientId,
                                 action: {
                                   action: "propose deal",
-                                  deal
+                                  deal: {
+                                    officerGives: {
+                                      money: deal.officerGives.money,
+                                      suppliesProducts: deal.officerGives.suppliesProducts.arr,
+                                    },
+                                    traderGives: {
+                                      money: deal.traderGives.money,
+                                      suppliesProducts: deal.traderGives.suppliesProducts.arr,
+                                    },
+                                    message: deal.message,
+                                  }
                                 }
                               }
                             });

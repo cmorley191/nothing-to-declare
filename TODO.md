@@ -9,7 +9,9 @@
 - chat window with game log
   - emote wheel
 - (DONE) optionally add text message on deal
-- make deals with supplies products
+- (WIP) make deals with supplies products
+  - todo: illegal goods
+  - todo: cart goods
 - pay fines with supplies products if out of money
 - (DONE) entry visa
 - hammer officer tool
@@ -41,6 +43,8 @@
   - game end points tie rules
 
 - bugs
+  - propose deal counter button highlighting is weird
+  - propose deal counter typing is weird
 
 - new features
   - game settings

@@ -1,4 +1,4 @@
-import { IgnoreDeal, ProductType, SerializableGameSettings, SerializableServerGameState } from "./game_types";
+import { SerializableIgnoreDeal, ProductType, SerializableGameSettings, SerializableServerGameState } from "./game_types";
 import { Optional, Result } from "./util";
 
 export interface ClientInfo {
@@ -170,7 +170,7 @@ export interface ClientCustomsActionEventData {
   | { action: "ignore cart", entryVisaStamps: EntryVisaStamp[] }
   | { action: "officer tool update", update: ServerOfficerToolUpdateEventData }
   // trader & officer actions:
-  | { action: "propose deal", deal: IgnoreDeal }
+  | { action: "propose deal", deal: SerializableIgnoreDeal }
   | { action: "reject deal" }
   | { action: "accept deal" }
   // other action:
