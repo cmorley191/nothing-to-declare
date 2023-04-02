@@ -3186,9 +3186,9 @@ function EntryVisa(props: {
                     .arr
                 )
                 .filter(s => s.amount > 0)
-                .map(s => (
+                .map((s, i) => (
                   <span key={`menu_game_payment_player_${iPlayerToNum(paymentData.payment.iPlayerGiver)}_item_${s.id}`}>
-                    {s.amount}{" "}
+                    {i == 0 ? undefined : ", "}{s.amount}{" "}
                     <span
                       style={{
                         opacity:
@@ -5589,13 +5589,13 @@ export default function MenuGame(props: MenuGameProps) {
                                       payment: clientGameState.result.deal.officerGives,
                                     } satisfies PaymentGameAnimationStep]
                                 )
-                                  .map((paymentRevealStep): GameAnimationStep[] => [
+                                  .map((paymentRevealStep, i): GameAnimationStep[] => [
 
                                     paymentRevealStep,
 
                                     {
                                       type: "wait",
-                                      delayMs: 2000
+                                      delayMs: i == 0 ? 2000 : 500
                                     },
                                     {
                                       ...paymentRevealStep,
