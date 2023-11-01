@@ -1,5 +1,6 @@
 import { EntryVisaStamp } from "./network_types";
-import { Optional, getRandomInt, nullopt, nullopt_t, opt } from "./util";
+import { getRandomInt } from "../core/misc";
+import { Optional, nullopt, nullopt_t, opt } from "../core/optional";
 
 export const playerIcons = ["😘", "😈", "🎅🏽", "🧙🏽", "💩", "💀", "🤡", "👻", "👽", "🤖", "😹", "🐵"];
 export const officerIcon = "⚖️";

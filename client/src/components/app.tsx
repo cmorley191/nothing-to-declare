@@ -2,10 +2,10 @@ import * as React from "react";
 import MenuConnect from "./menus/connect";
 import AnimatedEllipses from "./elements/animated_ellipses";
 import BufferedWebSocket from "../core/buffered_websocket";
-import * as NetworkTypes from "../core/network_types";
+import * as NetworkTypes from "../game/network_types";
 import MenuLobby from "./menus/lobby";
 import MenuGame from "./menus/game";
-import { GameSettings, PlayerArray } from "../core/game_types";
+import { GameSettings, PlayerArray } from "../game/game_types";
 
 type AppProps = {};
 

@@ -1,5 +1,5 @@
 import * as React from "react";
-import { Optional, nullopt, opt } from "../../core/util";
+import { Optional, nullopt, opt } from "../../core/optional";
 
 type ConnectInfo = {
   localPlayerName: string,

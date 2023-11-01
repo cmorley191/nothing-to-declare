@@ -1,9 +1,10 @@
 import * as React from "react";
 
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
-import * as NetworkTypes from "../../core/network_types";
-import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings, officerIcon, contractIcon, crossOutIcon, Payment, paymentEmpty, SerializableIgnoreDeal } from "../../core/game_types";
-import { Optional, getRandomInt, nullopt, omitAttrs, opt, optAnd, optBind, optMap, optValueOr } from "../../core/util";
+import * as NetworkTypes from "../../game/network_types";
+import { CartState, ClientGameState, CommunityContractPools as CommunityContractPools, ClaimedCart, IgnoreDeal, PersistentGameState, ProductType, ServerGameState, TraderSupplies, getProductInfo, readyPoolSize, illegalProductIcon, legalProductIcon, moneyIcon, fineIcon, productInfos, unknownProductIcon, recycleIcon, trophyIcon, pointIcon, firstPlaceIcon, secondPlaceIcon, awardTypes, winnerIcon, PlayerArray, ProductArray, ValidatedPlayerIndex, ValidPlayerIndex, SerializableServerGameState, iPlayerToNum, GameSettings, officerIcon, contractIcon, crossOutIcon, Payment, paymentEmpty, SerializableIgnoreDeal } from "../../game/game_types";
+import { getRandomInt, omitAttrs } from "../../core/misc";
+import { Optional, nullopt, opt, optAnd, optBind, optMap, optValueOr } from "../../core/optional";
 
 import AnimatedEllipses from "../elements/animated_ellipses";
 import Keyframes from "../elements/keyframes";
@@ -22,7 +23,7 @@ import cartOpenUnlabeledImgSrc from '../../../images/cart_open_unlabeled.png';
 import cartLidImgSrc from '../../../images/cart_lid.png';
 import crowbarImgSrc from '../../../images/crowbar.png';
 import stampImgSrc from '../../../images/stamper.png';
-import { OfficerToolStampState } from "../../core/network_types";
+import { OfficerToolStampState } from "../../game/network_types";
 
 type LocalInfo = {
   localPlayerName: string,

@@ -1,8 +1,8 @@
 import * as React from "react";
 import BufferedWebSocket, { WebSocketHandlers } from "../../core/buffered_websocket";
-import * as NetworkTypes from "../../core/network_types";
-import { GameSettings, ProductArray, SwapMode, generateDefaultCityName, playerIcons, productInfos } from "../../core/game_types";
-import { Optional, nullopt, opt } from "../../core/util";
+import * as NetworkTypes from "../../game/network_types";
+import { GameSettings, ProductArray, SwapMode, generateDefaultCityName, playerIcons, productInfos } from "../../game/game_types";
+import { Optional, nullopt, opt } from "../../core/optional";
 import AnimatedEllipses from "../elements/animated_ellipses";
 
 type LocalInfo = {

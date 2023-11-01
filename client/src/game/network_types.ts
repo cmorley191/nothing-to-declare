@@ -1,5 +1,6 @@
 import { SerializableIgnoreDeal, ProductType, SerializableGameSettings, SerializableServerGameState } from "./game_types";
-import { Optional, Result } from "./util";
+import { Optional } from "../core/optional";
+import { Result } from "../core/result";
 
 export interface ClientInfo {
   clientId: number,
