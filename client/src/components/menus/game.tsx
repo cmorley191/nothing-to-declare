@@ -9,6 +9,9 @@ import { Optional, nullopt, opt, optAnd, optBind, optMap, optValueOr } from "../
 import AnimatedEllipses from "../elements/animated_ellipses";
 import Keyframes from "../elements/keyframes";
 
+import "../../core/array_extensions";
+import "../../core/string_extensions";
+
 import parchmentLegalImgSrc from '../../../images/parchment.png';
 import parchmentLegalHighlightedImgSrc from '../../../images/parchment_highlighted.png';
 import parchmentIllegalImgSrc from '../../../images/parchment_red.png';

@@ -12,7 +12,25 @@ Currently there is no "officially" hosted server
 
 ## Screenshots
 
-Coming soon.
+Players manage a "hand" of merchandise that they can try to bring through customs on any given turn; merchandise that they hope to sell and earn the most money:
+
+![Image example of Supply Contract Swap game phase](screenshots/strategic_swap.png)
+
+Each turn, one player acts as the customs officer. The other players are traders and must decide what to bring to market that day, and whether or not they will be truthful about that in their statement to the customs officer:
+
+![Image example of Loading Cart game phase](screenshots/load.png)
+
+After traders have loaded their carts with merchandise, the officer can interrogate them about the contents that they claim they've loaded.
+
+If the officer thinks they're being truthful, they are duty-bound to let them through the gate:
+
+![Image example of an Interrogation that resulted in allowing the trader through the gate](screenshots/let_through.gif)
+
+However, if the officer suspects the trader is smuggling illegal merchandise, they should threaten to open the crate and issue a penalty! (the officer keeps the fine)
+
+![Image example of an Interrogation that resulted in the crate being opened and its contents inspected](screenshots/inspect.gif)
+
+The player who makes the most money by the end of the game (by selling legal merchandise, smuggling illegal merchandise, or a bit of both) will be crowned the winner!
 
 ## Building / Running
 

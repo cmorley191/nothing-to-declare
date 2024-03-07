@@ -5,6 +5,9 @@ import { GameSettings, ProductArray, SwapMode, generateDefaultCityName, playerIc
 import { Optional, nullopt, opt } from "../../core/optional";
 import AnimatedEllipses from "../elements/animated_ellipses";
 
+import "../../core/array_extensions";
+import "../../core/string_extensions";
+
 type LocalInfo = {
   localPlayerName: string,
   connectAddress: string,
