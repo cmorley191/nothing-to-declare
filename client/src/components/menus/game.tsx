@@ -3797,6 +3797,13 @@ export default function MenuGame(props: MenuGameProps) {
   const renderCount = React.useRef(0);
   React.useEffect(() => { renderCount.current++; });
 
+  const chatLog = React.useRef<string[]>([]);
+  const chatBoxRef = React.createRef<HTMLInputElement>();
+  const [forceRerenderState, setForceRerenderState] = React.useState(true);
+  function forceRerender() {
+    setForceRerenderState(!forceRerenderState);
+  }
+
   function produceError(err: any) {
     props.onClose({ warning: err });
   }
@@ -4430,6 +4437,18 @@ export default function MenuGame(props: MenuGameProps) {
             newToolsState: toolsStateRef.current
           })
         });
+      } break;
+
+      case NetworkTypes.ServerEventType.CHAT: {
+        const [client, secondClient] = props.clients.arr.filter(x => x.clientId == event.data.clientId);
+        if (client === undefined) {
+          produceError(`CHAT on nonexistent client ${event.data.clientId}`);
+        } else if (secondClient !== undefined) {
+          produceError(`CHAT has multiple matches for client ${event.data.clientId}`);
+        } else {
+          chatLog.current.push(`${client.name}: ${event.data.message}`);
+          forceRerender();
+        }
       } break;
     }
   }
@@ -5106,6 +5125,19 @@ export default function MenuGame(props: MenuGameProps) {
         }
       } break;
 
+      case NetworkTypes.ClientEventType.CHAT: {
+        const serverEvent: NetworkTypes.ServerEvent = {
+          type: NetworkTypes.ServerEventType.CHAT,
+          data: {
+            clientId: event.data.sourceClientId,
+            message: event.data.message,
+          },
+        };
+        props.ws.ws.send(`MSG|${props.clients.arr.filter(x => x.clientId != props.localInfo.clientId).map(x => x.clientId).join(",")}`
+          + `|${serverEvent.type}|${JSON.stringify(serverEvent.data)}`
+        );
+        clientHandleReceivedServerEvent(serverEvent);
+      } break;
     }
   }
 
@@ -6065,10 +6097,6 @@ export default function MenuGame(props: MenuGameProps) {
 
         <Section id="menu_game_working_center" style={{ overflowX: "auto", overflowY: "hidden", whiteSpace: "nowrap", textAlign: "center" }} >
           <div style={{ display: "flex" }}>
-            <Section title="Chat" style={{ display: "none", verticalAlign: "top" }}>
-
-            </Section>
-
             <Section style={{ display: "inline-block", verticalAlign: "top" }} hidden>
               <div style={{ fontSize: "250%", position: "relative" }}>
                 {recycleIcon}
@@ -7614,6 +7642,7 @@ export default function MenuGame(props: MenuGameProps) {
           </Section>
 
           <Section title="Earned Supplies" style={{ display: "inline-block", verticalAlign: "top" }}>
+
             <TraderSuppliesTable
               key={`menu_game_local_supplies_${renderCount.current}_rerender_${renderCount.current}`}
               usekey={"menu_game_local_supplies"}
@@ -7622,6 +7651,48 @@ export default function MenuGame(props: MenuGameProps) {
               animation={animation}
               type={"local"}
             />
+
+            <div style={{ border: "1px solid black", display: "flex", flexDirection: "column", height: "130px", alignItems: "center" }}>
+              <Section style={{
+                flexGrow: 1,
+                textAlign: "left",
+                display: "flex",
+                flexDirection: "column-reverse",
+                whiteSpace: "wrap",
+                width: 0,
+                minWidth: "100%",
+                overflowY: "auto",
+              }}>
+                {
+                  chatLog.current.map((message, iMessage) => (
+                    <span key={iMessage} style={{ wordWrap: "break-word" }}>{message}</span>
+                  ))
+                    .reverse()
+                }
+              </Section>
+              <input
+                ref={chatBoxRef}
+                type="text"
+                style={{ width: "97%" }}
+                onKeyDown={(e) => {
+                  if (e.key !== "Enter" || chatBoxRef.current === null) {
+                    return;
+                  }
+
+                  if (chatBoxRef.current.value.trim() !== "") {
+                    clientSendClientEventToServer({
+                      type: NetworkTypes.ClientEventType.CHAT,
+                      data: {
+                        sourceClientId: props.localInfo.clientId,
+                        message: chatBoxRef.current.value,
+                      },
+                    });
+                  }
+                  chatBoxRef.current.value = "";
+                }}
+              />
+            </div>
+
           </Section>
         </div>
       </Section >

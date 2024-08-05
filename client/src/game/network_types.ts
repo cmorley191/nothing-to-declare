@@ -83,6 +83,7 @@ export enum ServerEventType {
   START_GAME = 5,
   STATE_UPDATE = 6,
   OFFICER_TOOL_UPDATE = 7,
+  CHAT = 8,
 }
 
 export enum ClientEventType {
@@ -92,6 +93,7 @@ export enum ClientEventType {
   PACK_CART = 103,
   ADVANCE_CUSTOMS_INTRO = 104,
   CUSTOMS_ACTION = 105,
+  CHAT = 106,
 }
 
 export interface ServerWelcomeEventData {
@@ -180,6 +182,15 @@ export interface ClientCustomsActionEventData {
   | { action: "resolve completed" }
 }
 
+export interface ClientChatEventData {
+  sourceClientId: number,
+  message: string,
+};
+export interface ServerChatEventData {
+  clientId: number,
+  message: string,
+}
+
 export type ServerEvent =
   | { type: ServerEventType.WELCOME, data: ServerWelcomeEventData }
   | { type: ServerEventType.NOTWELCOME, data: ServerNotWelcomeEventData }
@@ -189,6 +200,7 @@ export type ServerEvent =
   | { type: ServerEventType.START_GAME, data: ServerStartGameEventData }
   | { type: ServerEventType.STATE_UPDATE, data: ServerStateUpdateEventData }
   | { type: ServerEventType.OFFICER_TOOL_UPDATE, data: ServerOfficerToolUpdateEventData }
+  | { type: ServerEventType.CHAT, data: ServerChatEventData }
 
 export type ClientEvent =
   | { type: ClientEventType.IDENTIFY, data: ClientIdentifyEventData }
@@ -197,6 +209,7 @@ export type ClientEvent =
   | { type: ClientEventType.PACK_CART, data: ClientPackCartEventData }
   | { type: ClientEventType.ADVANCE_CUSTOMS_INTRO, data: ClientAdvanceCustomsIntroEventData }
   | { type: ClientEventType.CUSTOMS_ACTION, data: ClientCustomsActionEventData }
+  | { type: ClientEventType.CHAT, data: ClientChatEventData }
 
 export function parseServerEvent(rawEvent: string): Result<ServerEvent, string> { // eventType | eventData
   const eventType = parseInt(rawEvent.substring(0, rawEvent.indexOf("|")));
@@ -219,6 +232,8 @@ export function parseServerEvent(rawEvent: string): Result<ServerEvent, string> 
       return { ok: true, value: { type: ServerEventType.STATE_UPDATE, data: JSON.parse(eventData) } };
     case ServerEventType.OFFICER_TOOL_UPDATE:
       return { ok: true, value: { type: ServerEventType.OFFICER_TOOL_UPDATE, data: JSON.parse(eventData) } };
+    case ServerEventType.CHAT:
+      return { ok: true, value: { type: ServerEventType.CHAT, data: JSON.parse(eventData) } };
     default:
       return { ok: false, error: `Invalid (unknown) server event type id: ${rawEvent}` };
   }
@@ -241,6 +256,8 @@ export function parseClientEvent(rawEvent: string): Result<ClientEvent, string> 
       return { ok: true, value: { type: ClientEventType.ADVANCE_CUSTOMS_INTRO, data: JSON.parse(eventData) } };
     case ClientEventType.CUSTOMS_ACTION:
       return { ok: true, value: { type: ClientEventType.CUSTOMS_ACTION, data: JSON.parse(eventData) } };
+    case ClientEventType.CHAT:
+      return { ok: true, value: { type: ClientEventType.CHAT, data: JSON.parse(eventData) } };
     default:
       return { ok: false, error: `Invalid (unknown) client event type id: ${rawEvent}` };
   }
