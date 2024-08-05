@@ -1,0 +1,32 @@
+export type DatapackProductInfoMilk = { name: "Milk", namePlural: "Milk", icon: "🥛" };
+export const datapackProductInfoMilk: DatapackProductInfoMilk = { name: "Milk", namePlural: "Milk", icon: "🥛" };
+export type DatapackProductInfoGrapes = { name: "Grape", namePlural: "Grapes", icon: "🍇" };
+export const datapackProductInfoGrapes: DatapackProductInfoGrapes = { name: "Grape", namePlural: "Grapes", icon: "🍇" };
+export type DatapackProductInfoPigs = { name: "Pig", namePlural: "Pigs", icon: "🐖" };
+export const datapackProductInfoPigs: DatapackProductInfoPigs = { name: "Pig", namePlural: "Pigs", icon: "🐖" };
+export type DatapackProductInfoStrawberries = { name: "Strawberry", namePlural: "Strawberries", icon: "🍓" };
+export const datapackProductInfoStrawberries: DatapackProductInfoStrawberries = { name: "Strawberry", namePlural: "Strawberries", icon: "🍓" };
+
+export type DatapackProductInfoCheese = { name: "Cheese", namePlural: "Cheese", icon: "🧀" };
+export const datapackProductInfoCheese: DatapackProductInfoCheese = { name: "Cheese", namePlural: "Cheese", icon: "🧀" };
+export type DatapackProductInfoIceCream = { name: "Ice Cream", namePlural: "Ice Creams", icon: "🍦" };
+export const datapackProductInfoIceCream: DatapackProductInfoIceCream = { name: "Ice Cream", namePlural: "Ice Creams", icon: "🍦" };
+export type DatapackProductInfoJuice = { name: "Juice", namePlural: "Juices", icon: "🧃" };
+export const datapackProductInfoJuice: DatapackProductInfoJuice = { name: "Juice", namePlural: "Juices", icon: "🧃" };
+export type DatapackProductInfoWine = { name: "Wine", namePlural: "Wine", icon: "🍷" };
+export const datapackProductInfoWine: DatapackProductInfoWine = { name: "Wine", namePlural: "Wine", icon: "🍷" };
+export type DatapackProductInfoSausage = { name: "Sausage", namePlural: "Sausage", icon: "🌭" };
+export const datapackProductInfoSausage: DatapackProductInfoSausage = { name: "Sausage", namePlural: "Sausage", icon: "🌭" };
+export type DatapackProductInfoBacon = { name: "Bacon", namePlural: "Bacon", icon: "🥓" };
+export const datapackProductInfoBacon: DatapackProductInfoBacon = { name: "Bacon", namePlural: "Bacon", icon: "🥓" };
+export type DatapackProductInfoShortcake = { name: "Strawberry Shortcake", namePlural: "Strawberry Shortcakes", icon: "🍰" };
+export const datapackProductInfoShortcake: DatapackProductInfoShortcake = { name: "Strawberry Shortcake", namePlural: "Strawberry Shortcakes", icon: "🍰" };
+
+export type DatapackProductInfoCoffee = { name: "Coffee", namePlural: "Coffee", icon: "☕" };
+export const datapackProductInfoCoffee: DatapackProductInfoCoffee = { name: "Coffee", namePlural: "Coffee", icon: "☕" };
+export type DatapackProductInfoHerbs = { name: "Herb", namePlural: "Herbs", icon: "🌿" };
+export const datapackProductInfoHerbs: DatapackProductInfoHerbs = { name: "Herb", namePlural: "Herbs", icon: "🌿" };
+export type DatapackProductInfoGems = { name: "Gem", namePlural: "Gems", icon: "💎" };
+export const datapackProductInfoGems: DatapackProductInfoGems = { name: "Gem", namePlural: "Gems", icon: "💎" };
+export type DatapackProductInfoSwords = { name: "Swords", namePlural: "Swords", icon: "⚔️" };
+export const datapackProductInfoSwords: DatapackProductInfoSwords = { name: "Swords", namePlural: "Swords", icon: "⚔️" };

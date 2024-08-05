@@ -7658,7 +7658,7 @@ export default function MenuGame(props: MenuGameProps) {
                 textAlign: "left",
                 display: "flex",
                 flexDirection: "column-reverse",
-                whiteSpace: "wrap",
+                whiteSpace: "normal",
                 width: 0,
                 minWidth: "100%",
                 overflowY: "auto",
@@ -7716,6 +7716,9 @@ export default function MenuGame(props: MenuGameProps) {
                   <span>{" "}{props.settings.generalPoolContractCounts.get(p.type)}x</span>
                 </div>
                 <SupplyContract productType={opt(p.type)} highlighted={false} crossedOut={false} />
+                <div style={{ whiteSpace: "normal", width: 0, minWidth: "100%", marginTop: "15px" }}>
+                  {p.name}
+                </div>
               </div>
             ))
             .arr
