@@ -37,7 +37,7 @@ export default function App({ }: AppProps) {
           onSubmit={(connectInfo) => {
             const [wsProtocol, wsPort] =
               (location.protocol === "https:")
-                ? ["wss", 9283]
+                ? ["ws", 9282]
                 : ["ws", 9282]
             const ws = new BufferedWebSocket(`${wsProtocol}://${connectInfo.connectAddress}:${wsPort}`);
 
